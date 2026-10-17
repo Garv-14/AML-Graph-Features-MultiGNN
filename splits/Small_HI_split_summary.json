@@ -1,0 +1,49 @@
+{
+  "dataset": "Small_HI",
+  "total_transactions": 5078345,
+  "total_laundering": 5177,
+  "total_pct_laundering": 0.1019,
+  "total_days": 18,
+  "day_cutoffs": {
+    "i": 6,
+    "j": 8,
+    "train_days": "0..5",
+    "val_days": "6..7",
+    "test_days": "8..17"
+  },
+  "splits": {
+    "train": {
+      "split": "Train",
+      "days": "0 to 5",
+      "num_rows": 3248921,
+      "pct_total_rows": 63.98,
+      "num_laundering": 2530,
+      "pct_laundering": 0.0779,
+      "timestamp_min": 0.0,
+      "timestamp_max": 518340.0,
+      "duration_hours": 143.98
+    },
+    "validation": {
+      "split": "Validation",
+      "days": "6 to 7",
+      "num_rows": 965524,
+      "pct_total_rows": 19.01,
+      "num_laundering": 1036,
+      "pct_laundering": 0.1073,
+      "timestamp_min": 518400.0,
+      "timestamp_max": 691140.0,
+      "duration_hours": 47.98
+    },
+    "test": {
+      "split": "Test",
+      "days": "8 to 17",
+      "num_rows": 863900,
+      "pct_total_rows": 17.01,
+      "num_laundering": 1611,
+      "pct_laundering": 0.1865,
+      "timestamp_min": 691200.0,
+      "timestamp_max": 1527480.0,
+      "duration_hours": 232.3
+    }
+  }
+}

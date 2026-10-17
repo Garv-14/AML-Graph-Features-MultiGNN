@@ -29,3 +29,20 @@ This document details every modification and new file introduced in Step 2 to re
 
 ## Key Environmental & Technical Finding
 - **PyG Neighbor Sampling Dependency**: While PyG static imports succeed without C++ extensions, PyG's `LinkNeighborLoader` relies on `NeighborSampler`, which at runtime calls `pyg-lib` or `torch-sparse`. On Windows with Python 3.13, pre-compiled wheels for `pyg-lib` do not yet exist on PyPI and compiling `torch-sparse` requires MSVC. On Google Colab or Linux with Python 3.10/3.11, pre-built binary wheels install seamlessly. Full split extraction (`export_splits.py`) and data formatting (`format_kaggle_files.py`) work cleanly and without dependency on C++ extensions.
+
+---
+
+# Step 3 Changes Log: Shared Evaluation Module & Random Split Export
+
+This step introduced a centralized, model-agnostic evaluation framework and exported a random split partition to benchmark temporal drift against random cross-validation. No existing GNN code (`main.py`, `training.py`, `train_util.py`, `data_loading.py`, `models.py`) was modified.
+
+## Summary of Changes (Step 3)
+
+| File | Status | Description of Change | Rationale |
+|---|---|---|---|
+| `evaluate.py` | **Created** | Shared evaluation module containing `evaluate_scores` (PR-AUC, ROC-AUC, F1, precision, recall, confusion matrix), `best_f1_threshold` (optimal operating threshold on validation PR curve), `alert_budget_metrics` (precision@k and recall@k under compliance alert capacity), and `append_result` (persists experiment runs to CSV). | Unifies performance evaluation across tabular, graph-feature, and GNN pipelines under consistent AML metrics. |
+| `data_access.py` | **Created** | Central data loading module with `load_formatted` (reads `formatted_transactions.csv` via configurable data directory) and `load_split` (loads temporal or random splits as DataFrames using saved `.npz` indices). | Ensures all models train and evaluate on strictly identical row sequences. |
+| `make_random_split.py` | **Created** | Script generating a random split of identical partition sizes (3,248,921 train / 965,524 val / 863,900 test) with fixed seed 42, saved to `splits/Small_HI_random_split.npz` and summary JSON. | Enables the "Temporal vs. Random Split" experiment to isolate the impact of temporal drift. |
+| `tests/test_evaluate.py` | **Created** | Unit test suite verifying perfect scorer edge cases, random scorer convergence to prevalence, threshold optimization, single-class handling, and alert budget metric correctness. | Ensures metric implementations are mathematically verified and robust against edge cases. |
+| `sanity_check.py` | **Created** | Integration script verifying zero index overlap (disjoint sets) across both temporal and random splits, validating DataFrame loading, and displaying comparative laundering rates. | Guarantees split integrity and prevents data leakage across partitions. |
+

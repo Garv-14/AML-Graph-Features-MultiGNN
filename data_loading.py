@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import numpy as np
 import torch
@@ -13,7 +14,8 @@ def get_data(args, data_config):
     3. PyG Data objects are created with the respective data splits.
     '''
 
-    transaction_file = f"{data_config['paths']['aml_data']}/{args.data}/formatted_transactions.csv" #replace this with your path to the respective AML data objects
+    aml_data_dir = os.environ.get("AML_DATA_DIR", data_config.get("paths", {}).get("aml_data", "C:/aml_data"))
+    transaction_file = os.path.join(aml_data_dir, args.data, "formatted_transactions.csv")
     df_edges = pd.read_csv(transaction_file)
 
     logging.info(f'Available Edge Features: {df_edges.columns.tolist()}')

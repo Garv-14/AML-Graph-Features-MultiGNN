@@ -1,3 +1,4 @@
+import os
 import torch
 import tqdm
 from torch_geometric.transforms import BaseTransform
@@ -40,7 +41,7 @@ def extract_param(parameter_name: str, args) -> float:
     Returns:
     - float: Value of the specified parameter.
     """
-    file_path = './model_settings.json'
+    file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model_settings.json')
     with open(file_path, "r") as file:
         data = json.load(file)
 

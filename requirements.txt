@@ -1,0 +1,15 @@
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+tqdm
+munch
+tabulate
+wandb
+lightgbm
+xgboost
+shap
+networkx
+pyarrow
+jupyter

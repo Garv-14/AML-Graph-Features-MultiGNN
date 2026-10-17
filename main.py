@@ -1,3 +1,5 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import time
 import logging
 from util import create_parser, set_seed, logger_setup

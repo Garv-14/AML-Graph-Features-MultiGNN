@@ -168,9 +168,10 @@ def train_gnn(tr_data, val_data, te_data, tr_inds, val_inds, te_inds, args, data
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     #define a model config dictionary and wandb logging at the same time
+    wandb_mode = "online" if (getattr(args, "use_wandb", False) and not args.testing) else "disabled"
     wandb.init(
-        mode="disabled" if args.testing else "online",
-        project="your_proj_name", #replace this with your wandb project name if you want to use wandb logging
+        mode=wandb_mode,
+        project="aml-minor-project",
 
         config={
             "epochs": args.n_epochs,

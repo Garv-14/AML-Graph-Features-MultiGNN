@@ -96,5 +96,24 @@ This step resolves model specification discrepancies from Step 4, fixes row-orde
 | `python run_tabular.py --split_kind random --seeds 0 1 2` | Full random split run across 3 seeds. |
 | `python summarize_results.py` | Generated final comparative markdown report in `results/summary_tabular.md`. |
 
+---
+
+## Step 4c – LightGBM Metric Calibration and Re-Run
+
+This step diagnoses and addresses early stopping and score collapse in plain LightGBM and aligns the metric monitoring for both LightGBM variants.
+
+### Summary of Changes (Step 4c)
+
+| File | Status | Description of Change | Rationale |
+|---|---|---|---|
+| `run_tabular.py` | **Modified** | For both `lightgbm` and `lightgbm_undersample`, added `metric="None"` to `LGBMClassifier` parameters so that default `binary_logloss` is omitted and early stopping monitors exclusively `eval_metric="average_precision"`. Switched plain `lightgbm` from `scale_pos_weight = negatives/positives` (~1283) to `scale_pos_weight = sqrt(negatives/positives)` (~35.8). | Prevents dual-metric premature early stopping conflict where unweighted validation logloss degraded rapidly under extreme class weighting, eliminates ranking collapse (temporal ROC-AUC was 0.088 on seed 2 in Step 4b), and stabilizes PR-AUC from 0.012 to 0.069 on temporal split. |
+
+### Backups & Runs Performed
+- Backed up `results/results.csv` to `results/results_v2_backup.csv`.
+- Deleted existing rows for `lightgbm` and `lightgbm_undersample` from `results/results.csv`.
+- Executed `run_tabular.py --split_kind temporal --seeds 0 1 2 --models lightgbm lightgbm_undersample`.
+- Executed `run_tabular.py --split_kind random --seeds 0 1 2 --models lightgbm lightgbm_undersample`.
+- Executed `summarize_results.py` to refresh `results/summary_tabular.md`.
+
 
 

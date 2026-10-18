@@ -203,7 +203,7 @@ def run_one_model(
             X_val_lgb[col] = X_val_lgb[col].astype("category")
             X_te_lgb[col] = X_te_lgb[col].astype("category")
 
-        scale = float(n_neg) / max(float(n_pos), 1.0)
+        scale = float(np.sqrt(float(n_neg) / max(float(n_pos), 1.0)))
         clf = lgb.LGBMClassifier(
             num_leaves=63,
             learning_rate=0.05,
@@ -212,6 +212,7 @@ def run_one_model(
             subsample=0.8,
             colsample_bytree=0.8,
             min_child_samples=20,
+            metric="None",
             n_jobs=-1,
             random_state=seed,
             verbose=-1,
@@ -279,6 +280,7 @@ def run_one_model(
             subsample=0.8,
             colsample_bytree=0.8,
             min_child_samples=20,
+            metric="None",
             n_jobs=-1,
             random_state=seed,
             verbose=-1,

@@ -123,6 +123,119 @@ def _undersample_50_to_1(
     return X_train.iloc[combined].reset_index(drop=True), y_train[combined]
 
 
+def prepare_lgb_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure categorical columns have pandas category dtype for LightGBM."""
+    df_lgb = df.copy()
+    for col in CAT_COLS:
+        if col in df_lgb.columns:
+            df_lgb[col] = df_lgb[col].astype("category")
+    return df_lgb
+
+
+def build_and_fit_lightgbm_undersample(
+    X_tr: pd.DataFrame,
+    y_tr: np.ndarray,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    seed: int = 0,
+    quick: bool = False,
+    neg_to_pos_ratio: float = 50.0,
+) -> tuple[lgb.LGBMClassifier, pd.DataFrame, np.ndarray]:
+    """Train LightGBM with majority undersampling and validation PR-AUC early stopping."""
+    rng = np.random.RandomState(seed)
+    X_tr_us, y_tr_us = _undersample_50_to_1(X_tr, y_tr, rng=rng, neg_to_pos_ratio=neg_to_pos_ratio)
+    X_tr_us_lgb = prepare_lgb_features(X_tr_us)
+    X_val_lgb = prepare_lgb_features(X_val)
+
+    clf = lgb.LGBMClassifier(
+        num_leaves=63,
+        learning_rate=0.05,
+        n_estimators=100 if quick else 400,
+        scale_pos_weight=1.0,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        min_child_samples=20,
+        metric="None",
+        n_jobs=-1,
+        random_state=seed,
+        verbose=-1,
+    )
+    clf.fit(
+        X_tr_us_lgb,
+        y_tr_us,
+        eval_set=[(X_val_lgb, y_val)],
+        eval_metric="average_precision",
+        callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)],
+    )
+    return clf, X_tr_us_lgb, y_tr_us
+
+
+def load_and_build_features(
+    feature_set: str = "tabular",
+    split_kind: str = "temporal",
+    data_name: str = "Small_HI",
+) -> tuple[pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray, pd.DataFrame, np.ndarray]:
+    """Load split, compute tabular features, and optionally load/append graph features."""
+    print("Loading split ...")
+    df_train, df_val, df_test = load_split(data_name=data_name, kind=split_kind)
+
+    y_tr = df_train[LABEL_COL].values.astype(int)
+    y_val = df_val[LABEL_COL].values.astype(int)
+    y_te = df_test[LABEL_COL].values.astype(int)
+
+    pct_tr = 100.0 * y_tr.mean()
+    pct_val = 100.0 * y_val.mean()
+    pct_te = 100.0 * y_te.mean()
+    print(f"  train={len(y_tr):,}  pos={y_tr.sum():,}  ({pct_tr:.3f}%)")
+    print(f"  val  ={len(y_val):,}  pos={y_val.sum():,}  ({pct_val:.3f}%)")
+    print(f"  test ={len(y_te):,}  pos={y_te.sum():,}  ({pct_te:.3f}%)")
+
+    print("Building base tabular features ...")
+    X_tr = build_tabular_features(df_train)
+    X_val = build_tabular_features(df_val)
+    X_te = build_tabular_features(df_test)
+
+    if feature_set != "tabular":
+        from data_access import get_data_dir
+
+        data_dir = Path(get_data_dir()) / data_name
+        splits_dir = Path(__file__).parent / "splits"
+        split_file = f"{data_name}_split.npz" if split_kind == "temporal" else f"{data_name}_random_split.npz"
+        sp_indices = np.load(splits_dir / split_file)
+        tr_inds = sp_indices["tr_inds"]
+        val_inds = sp_indices["val_inds"]
+        te_inds = sp_indices["te_inds"]
+
+        dyn_path = data_dir / "graph_dynamic.parquet"
+        print(f"Loading dynamic graph features from {dyn_path} ...")
+        df_dyn = pd.read_parquet(dyn_path)
+        dyn_tr = df_dyn.iloc[tr_inds].reset_index(drop=True)
+        dyn_val = df_dyn.iloc[val_inds].reset_index(drop=True)
+        dyn_te = df_dyn.iloc[te_inds].reset_index(drop=True)
+
+        if feature_set == "tab_dyn":
+            X_tr = pd.concat([X_tr, dyn_tr], axis=1)
+            X_val = pd.concat([X_val, dyn_val], axis=1)
+            X_te = pd.concat([X_te, dyn_te], axis=1)
+        elif feature_set == "tab_dyn_static":
+            stat_path = data_dir / f"graph_static_{split_kind}.parquet"
+            print(f"Loading static graph features from {stat_path} ...")
+            df_stat = pd.read_parquet(stat_path)
+            stat_tr = df_stat.iloc[tr_inds].reset_index(drop=True)
+            stat_val = df_stat.iloc[val_inds].reset_index(drop=True)
+            stat_te = df_stat.iloc[te_inds].reset_index(drop=True)
+            X_tr = pd.concat([X_tr, dyn_tr, stat_tr], axis=1)
+            X_val = pd.concat([X_val, dyn_val, stat_val], axis=1)
+            X_te = pd.concat([X_te, dyn_te, stat_te], axis=1)
+
+    print(
+        f"  Feature DataFrame shapes:  "
+        f"train={X_tr.shape}  val={X_val.shape}  test={X_te.shape}"
+    )
+    return X_tr, y_tr, X_val, y_val, X_te, y_te
+
+
+
 # ---------------------------------------------------------------------------
 # Core: train, select threshold, evaluate one model
 # ---------------------------------------------------------------------------
@@ -273,35 +386,11 @@ def run_one_model(
         te_scores = -clf.score_samples(X_te)
 
     elif model_name == "lightgbm_undersample":
-        X_tr_us, y_tr_us = _undersample_50_to_1(X_tr, y_tr, rng=rng, neg_to_pos_ratio=50.0)
-        X_tr_us_lgb = X_tr_us.copy()
-        X_val_lgb = X_val.copy()
-        X_te_lgb = X_te.copy()
-        for col in CAT_COLS:
-            X_tr_us_lgb[col] = X_tr_us_lgb[col].astype("category")
-            X_val_lgb[col] = X_val_lgb[col].astype("category")
-            X_te_lgb[col] = X_te_lgb[col].astype("category")
-
-        clf = lgb.LGBMClassifier(
-            num_leaves=63,
-            learning_rate=0.05,
-            n_estimators=100 if quick else 400,
-            scale_pos_weight=1.0,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            min_child_samples=20,
-            metric="None",
-            n_jobs=-1,
-            random_state=seed,
-            verbose=-1,
+        clf, X_tr_us_lgb, y_tr_us = build_and_fit_lightgbm_undersample(
+            X_tr=X_tr, y_tr=y_tr, X_val=X_val, y_val=y_val, seed=seed, quick=quick
         )
-        clf.fit(
-            X_tr_us_lgb,
-            y_tr_us,
-            eval_set=[(X_val_lgb, y_val)],
-            eval_metric="average_precision",
-            callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)],
-        )
+        X_val_lgb = prepare_lgb_features(X_val)
+        X_te_lgb = prepare_lgb_features(X_te)
         val_scores = clf.predict_proba(X_val_lgb)[:, 1]
         te_scores = clf.predict_proba(X_te_lgb)[:, 1]
 
@@ -447,70 +536,12 @@ def main() -> None:
     print(f"Models to run: {models_to_run}")
 
     # ------------------------------------------------------------------ #
-    # Load split (identical across seeds)
+    # Load data and build features
     # ------------------------------------------------------------------ #
-    print("Loading split ...")
-    df_train, df_val, df_test = load_split(data_name=args.data, kind=args.split_kind)
-
-    y_tr = df_train[LABEL_COL].values.astype(int)
-    y_val_arr = df_val[LABEL_COL].values.astype(int)
-    y_te = df_test[LABEL_COL].values.astype(int)
-
-    pct_tr = 100.0 * y_tr.mean()
-    pct_val = 100.0 * y_val_arr.mean()
-    pct_te = 100.0 * y_te.mean()
-    print(f"  train={len(y_tr):,}  pos={y_tr.sum():,}  ({pct_tr:.3f}%)")
-    print(f"  val  ={len(y_val_arr):,}  pos={y_val_arr.sum():,}  ({pct_val:.3f}%)")
-    print(f"  test ={len(y_te):,}  pos={y_te.sum():,}  ({pct_te:.3f}%)")
-
-    # ------------------------------------------------------------------ #
-    # Build features once (no randomness; same for all seeds)
-    # ------------------------------------------------------------------ #
-    print("Building base tabular features ...")
-    X_tr = build_tabular_features(df_train)
-    X_val_feat = build_tabular_features(df_val)
-    X_te_feat = build_tabular_features(df_test)
-
-    # ------------------------------------------------------------------ #
-    # Load and concatenate extra graph features if ablation feature set
-    # ------------------------------------------------------------------ #
-    if args.feature_set != "tabular":
-        from data_access import get_data_dir
-
-        data_dir = Path(get_data_dir()) / args.data
-        splits_dir = Path(__file__).parent / "splits"
-        split_file = f"{args.data}_split.npz" if args.split_kind == "temporal" else f"{args.data}_random_split.npz"
-        sp_indices = np.load(splits_dir / split_file)
-        tr_inds = sp_indices["tr_inds"]
-        val_inds = sp_indices["val_inds"]
-        te_inds = sp_indices["te_inds"]
-
-        # Load dynamic features
-        dyn_path = data_dir / "graph_dynamic.parquet"
-        print(f"Loading dynamic graph features from {dyn_path} ...")
-        df_dyn = pd.read_parquet(dyn_path)
-        dyn_tr = df_dyn.iloc[tr_inds].reset_index(drop=True)
-        dyn_val = df_dyn.iloc[val_inds].reset_index(drop=True)
-        dyn_te = df_dyn.iloc[te_inds].reset_index(drop=True)
-
-        if args.feature_set == "tab_dyn":
-            X_tr = pd.concat([X_tr, dyn_tr], axis=1)
-            X_val_feat = pd.concat([X_val_feat, dyn_val], axis=1)
-            X_te_feat = pd.concat([X_te_feat, dyn_te], axis=1)
-        elif args.feature_set == "tab_dyn_static":
-            stat_path = data_dir / f"graph_static_{args.split_kind}.parquet"
-            print(f"Loading static graph features from {stat_path} ...")
-            df_stat = pd.read_parquet(stat_path)
-            stat_tr = df_stat.iloc[tr_inds].reset_index(drop=True)
-            stat_val = df_stat.iloc[val_inds].reset_index(drop=True)
-            stat_te = df_stat.iloc[te_inds].reset_index(drop=True)
-            X_tr = pd.concat([X_tr, dyn_tr, stat_tr], axis=1)
-            X_val_feat = pd.concat([X_val_feat, dyn_val, stat_val], axis=1)
-            X_te_feat = pd.concat([X_te_feat, dyn_te, stat_te], axis=1)
-
-    print(
-        f"  Feature DataFrame shapes:  "
-        f"train={X_tr.shape}  val={X_val_feat.shape}  test={X_te_feat.shape}"
+    X_tr, y_tr, X_val_feat, y_val_arr, X_te_feat, y_te = load_and_build_features(
+        feature_set=args.feature_set,
+        split_kind=args.split_kind,
+        data_name=args.data,
     )
 
     # ------------------------------------------------------------------ #

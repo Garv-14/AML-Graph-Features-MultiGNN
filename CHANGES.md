@@ -199,6 +199,43 @@ Feature build runtime: ~24 s dynamic, ~5 s static per split. Memory: ~775 MB RAM
   - `run_tabular.py --feature_set tab_dyn_static --split_kind temporal`
   - `run_tabular.py --feature_set tab_dyn_static --split_kind random`
 
+---
+
+## Step 6 — Model Interpretability with SHAP
+
+### Goal
+Explain the top-performing model (`lightgbm_undersample` on `tab_dyn` temporal split, seed 0) using SHAP (`TreeExplainer`) to uncover global feature importance, feature family contributions, and local predictions on true positive laundering transactions.
+
+### Changes & New Files
+
+| File | Status | Description |
+|------|--------|-------------|
+| `explain_shap.py` | **Created** | Script to retrain `lightgbm_undersample` on `tab_dyn` temporal split (seed 0), verify exact PR-AUC against `results.csv`, save model checkpoint, compute SHAP values over all test positives + 20k sampled negatives, generate interpretability figures, and output family/feature tables. |
+| `run_tabular.py` | **Modified** | Refactored `prepare_lgb_features`, `build_and_fit_lightgbm_undersample`, and `load_and_build_features` as clean, reusable functions imported directly by `explain_shap.py`. |
+| `models/lgbm_us_tab_dyn_temporal_seed0.pkl` | **Created** | Serialized trained LightGBM model for seed 0. |
+| `results/figures/shap_global_bar_top20.png` | **Created** | Global bar chart of mean \|SHAP\| across the top 20 features. |
+| `results/figures/shap_beeswarm_top15.png` | **Created** | Summary beeswarm plot of log-odds impact for top 15 features. |
+| `results/figures/shap_dependence_1_pair_prior_cnt.png` | **Created** | Dependence plot for #1 feature (`pair_prior_cnt`). |
+| `results/figures/shap_dependence_2_payment_format.png` | **Created** | Dependence plot for #2 feature (`payment_format`). |
+| `results/figures/shap_dependence_3_s_gap_out.png` | **Created** | Dependence plot for #3 feature (`s_gap_out`). |
+| `results/figures/shap_waterfall_tp_1.png` | **Created** | Local waterfall plot for top test TP (Rank #1 overall, score 0.9998). |
+| `results/figures/shap_waterfall_tp_2.png` | **Created** | Local waterfall plot for median test TP in top 0.1% (Rank #402, score 0.9952). |
+| `results/figures/shap_waterfall_tp_3.png` | **Created** | Local waterfall plot for boundary test TP in top 0.1% (Rank #863, score 0.9768). |
+
+### Key Findings & Metrics
+- **Exact PR-AUC Reproduction**: Stored = `0.694059`, Retrained = `0.694059` (diff = `0.000000`, well within `< 0.01`).
+- **Feature Family Relative Importance**:
+  - `sender history`: **31.8%** share of total \|SHAP\| (10 features, avg 0.1979/feat).
+  - `pair history`: **28.3%** share (2 features, avg 0.8808/feat — highest per-feature density).
+  - `tabular`: **26.8%** share (11 features, avg 0.1517/feat).
+  - `receiver history`: **13.1%** share (8 features, avg 0.1018/feat).
+- **Behavioral Insights & Suspicion Checks**:
+  - `pair_prior_cnt` is the #1 feature: high past interaction frequency sharply *decreases* laundering probability (negative correlation), identifying recurring legitimate business ties vs suspicious first-time pairs.
+  - `payment_format` is #2: high-friction/high-value channels (e.g. Wire, Cheque) strongly elevate risk.
+  - `s_gap_out` is #3: rapid transaction bursts (very small gaps) push scores up.
+  - *Time Artefact Warning*: Cumulative counters (`s_out_cnt`, `r_in_cnt`) grow monotonically over time; while informative of burst velocity, they partially function as proxies for account age/tenure over chronological streams.
+
+
 
 
 

@@ -1,0 +1,3 @@
+model,features_set,n_features,dropped_columns,test_pr_auc,test_prevalence,lift,unique_test_scores
+lightgbm_undersample,tab_dyn_full,31,none,0.694059,0.001865,372.19,862501
+lightgbm_undersample,tab_dyn_no_cumulative_volume,23,s_out_cnt;s_out_amt;s_in_cnt;s_in_amt;r_in_cnt;r_in_amt;r_out_cnt;r_out_amt,0.694474,0.001865,372.41,810004

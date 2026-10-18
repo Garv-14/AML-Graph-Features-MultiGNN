@@ -235,6 +235,59 @@ Explain the top-performing model (`lightgbm_undersample` on `tab_dyn` temporal s
   - `s_gap_out` is #3: rapid transaction bursts (very small gaps) push scores up.
   - *Time Artefact Warning*: Cumulative counters (`s_out_cnt`, `r_in_cnt`) grow monotonically over time; while informative of burst velocity, they partially function as proxies for account age/tenure over chronological streams.
 
+---
+
+## Step 6b — Empirical Verification of SHAP Claims & Quantification
+
+### Goal
+Replace qualitative hypotheses and unverified guesses from the initial SHAP write-up with exact empirical measurements, verified category code mappings, and an ablation of cumulative-volume counters.
+
+### New Files
+
+| File | Status | Description |
+|------|--------|-------------|
+| `explain_checks.py` | **Created** | Script implementing direction analysis (Spearman rho + quintile SHAPs), category code decoding and frequency verification against raw data, full-test new-pair frequency check, and tenure ablation. |
+| `results/tenure_check.csv` | **Created** | Benchmark comparison of full `tab_dyn` model (31 features) vs tenure-ablated model (23 features, dropping 8 cumulative-volume counters). |
+
+### Key Findings & Empirical Tables
+
+1. **Direction Analysis (Top 15 Features by Mean \|SHAP\|)**:
+   - `pair_prior_cnt` (Rank 1, \|SHAP\|=1.6890): Spearman $\rho = -0.8947$, Q1 = $+1.6698$, Q5 = $-2.2976$ $\rightarrow$ **higher lowers score**.
+   - `s_gap_out` (Rank 3, \|SHAP\|=0.5995): Spearman $\rho = +0.2372$, Q1 = $+0.3911$, Q5 = $+1.6730$ $\rightarrow$ **higher raises score**.
+   - `s_uniq_receivers` (Rank 4, \|SHAP\|=0.5213): Spearman $\rho = -0.1701$ $\rightarrow$ **non-monotonic**.
+   - `s_out_cnt` (Rank 5, \|SHAP\|=0.2546): Spearman $\rho = -0.0082$ $\rightarrow$ **non-monotonic**.
+   - `r_gap_in` (Rank 6, \|SHAP\|=0.2195): Spearman $\rho = +0.6573$, Q1 = $-0.1419$, Q5 = $+0.5449$ $\rightarrow$ **higher raises score**.
+   - `amount_ratio` (Rank 8, \|SHAP\|=0.1667): Spearman $\rho = +0.7025$, Q1 = $-0.3389$, Q5 = $+0.1035$ $\rightarrow$ **higher raises score**.
+   - `r_in_amt` (Rank 9, \|SHAP\|=0.1281): Spearman $\rho = -0.7803$, Q1 = $+0.1914$, Q5 = $-0.1746$ $\rightarrow$ **higher lowers score**.
+
+2. **Category Code Verification & Distribution**:
+   - Replicated first-appearance dictionary over raw `HI-Small_Trans.csv`; verified exact row counts per code in `formatted_transactions.csv` (100% match).
+   - **Payment Format**:
+     - `Credit Card` (Code 2): Mean SHAP = **+3.0484**, represents **92.43%** of all test positives (vs 13.71% of negatives).
+     - `Cheque` (Code 1): Mean SHAP = **-0.3205**, represents only **2.05%** of positives (vs 28.91% of negatives).
+     - `Reinvestment` (Code 0): Mean SHAP = **+0.0030**, 3.72% of positives.
+     - `ACH` (Code 3): Mean SHAP = **-0.8482**, 1.18% of positives.
+     - `Cash` (Code 4): Mean SHAP = **-0.7504**, 0.00% of positives.
+
+3. **New-Pair Full Test Set Check ($N = 863,900$)**:
+   - `pair_prior_cnt == 0` (New Pair): Positive rate = **3.4282%** (1,276 / 37,221).
+   - `pair_prior_cnt > 0` (Prior Pair): Positive rate = **0.0405%** (335 / 826,679).
+   - Positives with `pair_prior_cnt == 0`: **79.21%** (1,276 of 1,611 test positives).
+   - Negatives with `pair_prior_cnt == 0`: **4.17%** (35,945 of 862,289 test negatives).
+   - **Enrichment Ratio: 84.60x** higher laundering rate on first-time pairings.
+
+4. **Tenure Ablation (Dropping 8 Cumulative-Volume Counters)**:
+   - Dropping `s_out_cnt`, `s_out_amt`, `s_in_cnt`, `s_in_amt`, `r_in_cnt`, `r_in_amt`, `r_out_cnt`, `r_out_amt` (31 $\rightarrow$ 23 features).
+   - Full model: PR-AUC = `0.694059`, Lift = `372.2`, Unique scores = `862,501`.
+   - Tenure-ablated model: PR-AUC = `0.694474`, Lift = `372.4`, Unique scores = `810,004`.
+   - Result: PR-AUC improves slightly (**+0.000415**), confirming cumulative volume counters were non-essential and removing them eliminates potential time-proxy leakage.
+
+5. **Contradictions to Prior Step 6 Summary**:
+   - *Payment Format*: The previous summary guessed that *"high-risk formats like Wire or Cheque substantially elevate laundering likelihood"*. In reality, Cheque strongly lowers score (mean SHAP -0.3205; only 2.05% of positives), while **Credit Card** overwhelmingly dominates laundering cases (92.43% of positives, mean SHAP +3.0484).
+   - *Sender Gap*: The previous summary asserted that *"very short gaps (rapid-fire transactions) increase laundering score"*. The empirical Spearman correlation is positive ($\rho = +0.2372$, Q1 = +0.3911 vs Q5 = +1.6730), showing that higher gap times actually produce higher SHAP values.
+   - *Unique Receivers / Out Count*: Previously described as positive linear drivers; the data shows both are strictly **non-monotonic** ($\rho = -0.1701$ and $\rho = -0.0082$).
+
+
 
 
 

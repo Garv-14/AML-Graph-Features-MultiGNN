@@ -137,6 +137,43 @@ def test_append_result():
     print("PASS: test_append_result")
 
 
+def test_alert_budget_metrics_ties_and_shuffling():
+    """Checks that when all scores are identical, precision@k is close to prevalence,
+    and results are identical if the input rows are shuffled."""
+    n = 100000
+    p = 0.05
+    rng = np.random.default_rng(42)
+
+    # All scores identical: positives clustered at start
+    y_true = np.zeros(n, dtype=int)
+    y_true[: int(n * p)] = 1
+    y_score = np.full(n, 0.5)
+
+    metrics = alert_budget_metrics(y_true, y_score, budgets=(0.001, 0.005, 0.01))
+    for b in (0.001, 0.005, 0.01):
+        p_at_k = metrics[f"budget_{b}"]["precision_at_k"]
+        assert abs(p_at_k - p) < 0.015, (
+            f"Expected precision@k close to prevalence {p}, got {p_at_k}"
+        )
+
+    # Shuffled input rows with distinct scores: results must be identical
+    n_sample = 2000
+    y_true_ranked = rng.binomial(1, 0.1, size=n_sample)
+    y_score_ranked = rng.uniform(0.0, 1.0, size=n_sample)
+
+    res_orig = alert_budget_metrics(y_true_ranked, y_score_ranked)
+    perm = rng.permutation(n_sample)
+    res_shuf = alert_budget_metrics(y_true_ranked[perm], y_score_ranked[perm])
+
+    for b in (0.001, 0.005, 0.01):
+        assert res_orig[f"budget_{b}"]["precision_at_k"] == res_shuf[f"budget_{b}"]["precision_at_k"], (
+            f"Precision@k differed under shuffle: {res_orig[f'budget_{b}']} vs {res_shuf[f'budget_{b}']}"
+        )
+        assert res_orig[f"budget_{b}"]["recall_at_k"] == res_shuf[f"budget_{b}"]["recall_at_k"]
+
+    print("PASS: test_alert_budget_metrics_ties_and_shuffling")
+
+
 if __name__ == "__main__":
     print("Running evaluate module unit tests...")
     test_perfect_scorer()
@@ -145,4 +182,5 @@ if __name__ == "__main__":
     test_alert_budget_metrics()
     test_single_class_edge_case()
     test_append_result()
+    test_alert_budget_metrics_ties_and_shuffling()
     print("All evaluate module tests passed successfully!")

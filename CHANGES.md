@@ -46,3 +46,55 @@ This step introduced a centralized, model-agnostic evaluation framework and expo
 | `tests/test_evaluate.py` | **Created** | Unit test suite verifying perfect scorer edge cases, random scorer convergence to prevalence, threshold optimization, single-class handling, and alert budget metric correctness. | Ensures metric implementations are mathematically verified and robust against edge cases. |
 | `sanity_check.py` | **Created** | Integration script verifying zero index overlap (disjoint sets) across both temporal and random splits, validating DataFrame loading, and displaying comparative laundering rates. | Guarantees split integrity and prevents data leakage across partitions. |
 
+
+---
+
+## Step 4 – Tabular Baselines
+
+| File | Status | Description of Change | Rationale |
+|---|---|---|---|
+| `features_tabular.py` | **Created** | Per-row feature engineering module exporting `FEATURE_COLS` and `build_tabular_features(df)`. Produces 11 features: `amount_sent`, `amount_received`, `log1p_amount_sent`, `log1p_amount_received`, `amount_ratio`, `sent_currency`, `received_currency`, `payment_format`, `same_currency`, `hour_of_day`, `day_of_week`. No cross-row aggregation; safe against temporal leakage. Explicitly excludes `EdgeID`, `from_id`, `to_id`, raw `Timestamp`, and `Is Laundering`. | Provides a clean, reusable feature set shared identically by all six tabular models and compatible with both temporal and random splits. |
+| `run_tabular.py` | **Created** | End-to-end training and evaluation script for six model families: `logistic_regression` (class_weight=balanced), `random_forest` (n=300, balanced), `lightgbm` (scale_pos_weight), `xgboost` (scale_pos_weight), `isolation_forest` (unsupervised, contamination from train prevalence), `lightgbm_undersample` (random majority undersampling to 10% positives). Threshold selected exclusively on validation PR curve via `best_f1_threshold`; then applied unchanged to test. Saves predictions as `.npy` to `results/preds/` and fitted models (seed 0 only) as `.pkl` to `models/`. Results appended to `results/results.csv` via `append_result`. CLI accepts `--split_kind {temporal,random}`, `--seeds`, `--models`, `--quick`, `--data`. | Central training harness for the tabular phase of the project, designed to produce both the main temporal result and the contrast random-split experiment. |
+| `summarize_results.py` | **Created** | Reads `results/results.csv`, filters tabular experiments, computes mean ± std across seeds for PR-AUC, ROC-AUC, F1, Precision, Recall, and alert-budget metrics (P@0.1%, P@0.5%, P@1%). Prints and saves `results/summary_tabular.md`. | Produces publication-ready comparison tables for both temporal and random splits. |
+| `.gitignore` | **Updated** | Added `results/preds/`, `models/`, `*.pkl`, `*.npy` exclusions. `results/results.csv` remains tracked. | Prevents large binary prediction and model artefacts from entering version control while keeping the summary CSV in git history. |
+
+### Runs performed
+
+| Command | Purpose |
+|---|---|
+| `python run_tabular.py --quick --seeds 0` | Smoke test (reduced estimators, all 6 models) |
+| `python run_tabular.py --split_kind temporal --seeds 0 1 2` | Main result: temporal split, 3 seeds |
+| `python run_tabular.py --split_kind random --seeds 0 1 2` | Contrast experiment: random split, 3 seeds |
+| `python summarize_results.py` | Generates `results/summary_tabular.md` |
+
+---
+
+## Step 4b – Model Alignment, Ties Fix, and Re-Run
+
+This step resolves model specification discrepancies from Step 4, fixes row-order bias in the alert-budget evaluation metric, and produces refreshed end-to-end benchmarks for both temporal and random splits across seeds 0, 1, and 2.
+
+### Summary of Changes (Step 4b)
+
+| File | Status | Description of Change | Rationale |
+|---|---|---|---|
+| `evaluate.py` | **Modified** | In `alert_budget_metrics`, equal predicted scores are now broken with a seeded random permutation (seed 0) via stable argsort prior to taking the top $k$ items. | Eliminates row-order dependence in alert budget evaluations (preventing artificial 100% precision when positive rows cluster at the start of a split). |
+| `tests/test_evaluate.py` | **Modified** | Added `test_alert_budget_metrics_ties_and_shuffling` verifying: (1) on a large synthetic dataset with identical scores, precision@k is close to prevalence; and (2) when scores are distinct, shuffling input rows yields identical metric results. | Verifies mathematically sound tie-breaking and order invariance. |
+| `run_tabular.py` | **Modified** | Re-implemented models to strictly match original specs: <br>• `logistic_regression`: Scikit-Learn `Pipeline` with `ColumnTransformer` (One-hot encoding `sent_currency`, `received_currency`, `payment_format` with `handle_unknown="ignore"`, and `StandardScaler` on all numeric features fitted strictly on train), `class_weight="balanced"`, `max_iter=300`.<br>• `random_forest`: `n_estimators=100` (30 when `--quick`), `min_samples_leaf=20`, `class_weight="balanced_subsample"`, `max_samples=0.2`, `n_jobs=-1`.<br>• `lightgbm`: `sent_currency`, `received_currency`, `payment_format` encoded as pandas `category` dtype; `num_leaves=63`, `learning_rate=0.05`, `n_estimators=400` with early stopping on validation split (`eval_metric="average_precision"`, `stopping_rounds=30`), `scale_pos_weight = negatives/positives`.<br>• `xgboost`: `tree_method="hist"`, `scale_pos_weight = negatives/positives`, `eval_metric="aucpr"`, `early_stopping_rounds=30` on validation split, `n_estimators=400`.<br>• `lightgbm_undersample`: Random majority undersampling to a 50:1 negative-to-positive ratio (preserving all positives), `scale_pos_weight=1.0`, same early stopping as LightGBM.<br>• `isolation_forest`: `contamination="auto"` (no label-derived values), fitted on train features only; uses raw `-score_samples` without min-max scaling or clipping.<br>• Added unique score tracking and warning when test scores have fewer than 1000 unique values. | Aligns all tabular models with baseline specifications, fixes convergence failure in logistic regression, stabilizes early stopping, and tracks score discretization. |
+| `summarize_results.py` | **Modified** | Generates side-by-side comparison tables between temporal and random splits; computes PR-AUC lift (`PR-AUC / test prevalence`), ROC-AUC, F1, Precision, and Recall (mean ± std); prints test prevalence on its own line; outputs full Alert Budget tables (P@k and R@k for 0.1%, 0.5%, 1.0%); reports mean training times per model in seconds; writes to `results/summary_tabular.md`. | Delivers complete, publication-ready comparative metrics isolating temporal distribution drift. |
+
+### Backups & Artifacts
+- Previous results moved: `results/results.csv` -> `results/results_v1_backup.csv`, `results/summary_tabular.md` -> `results/summary_v1_backup.md`.
+- Stale prediction arrays in `results/preds/` and checkpoints in `models/` were cleared before running fresh experiments.
+
+### Step 4b Runs Performed
+
+| Command | Purpose |
+|---|---|
+| `python tests/test_evaluate.py` | Executed shared evaluation unit test suite including tie-breaking verification. |
+| `python run_tabular.py --quick --seeds 0` | Smoke test verifying all 6 model pipelines end-to-end. |
+| `python run_tabular.py --split_kind temporal --seeds 0 1 2` | Full temporal split run across 3 seeds. |
+| `python run_tabular.py --split_kind random --seeds 0 1 2` | Full random split run across 3 seeds. |
+| `python summarize_results.py` | Generated final comparative markdown report in `results/summary_tabular.md`. |
+
+
+

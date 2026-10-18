@@ -4,3 +4,9 @@ __pycache__/
 logs/
 splits/*.npz
 .baseline_original/
+
+# Tabular model outputs (large binary files)
+results/preds/
+models/
+*.pkl
+*.npy

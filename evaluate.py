@@ -178,8 +178,13 @@ def alert_budget_metrics(
     n_rows = len(y_true_arr)
     n_positives = int(np.sum(y_true_arr == 1))
 
-    # Rank indices in descending order of predicted score
-    sorted_indices = np.argsort(-y_score_arr)
+    # Break ties among equal scores with a seeded random permutation (seed 0)
+    if n_rows > 0:
+        rng = np.random.default_rng(0)
+        perm = rng.permutation(n_rows)
+        sorted_indices = perm[np.argsort(-y_score_arr[perm], kind="stable")]
+    else:
+        sorted_indices = np.array([], dtype=int)
 
     results = {}
     for b in budgets:

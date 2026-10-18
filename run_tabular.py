@@ -71,6 +71,13 @@ ALL_MODELS = [
     "lightgbm_undersample",
 ]
 
+ABLATION_MODELS = [
+    "logistic_regression",
+    "random_forest",
+    "xgboost",
+    "lightgbm_undersample",
+]
+
 LABEL_COL = "Is Laundering"
 CAT_COLS = ["sent_currency", "received_currency", "payment_format"]
 NUM_COLS = [c for c in FEATURE_COLS if c not in CAT_COLS]
@@ -132,6 +139,7 @@ def run_one_model(
     split_kind: str,
     quick: bool,
     save_model: bool,
+    experiment_name: str | None = None,
 ) -> dict:
     """Train a model, pick the best F1 threshold on val, evaluate on test.
 
@@ -144,6 +152,7 @@ def run_one_model(
         split_kind: 'temporal' or 'random' (used in output file names).
         quick: If True, use reduced estimator counts for fast smoke tests.
         save_model: If True, persist fitted model to MODELS_DIR (seed 0 only).
+        experiment_name: Optional experiment identifier for results.csv.
 
     Returns:
         Dict with experiment identifiers and all metric values for results.csv.
@@ -152,17 +161,18 @@ def run_one_model(
     n_neg = int((y_tr == 0).sum())
     rng = np.random.RandomState(seed)
 
-    print(f"  [{model_name}] seed={seed}  train_rows={len(y_tr):,}  pos={n_pos:,}")
+    print(f"  [{model_name}] seed={seed}  train_rows={len(y_tr):,}  pos={n_pos:,}  features={X_tr.shape[1]}")
     t0 = time.time()
 
     # ------------------------------------------------------------------ #
     # Fit and score
     # ------------------------------------------------------------------ #
     if model_name == "logistic_regression":
+        num_cols = [c for c in X_tr.columns if c not in CAT_COLS]
         preprocessor = ColumnTransformer(
             transformers=[
                 ("cat", OneHotEncoder(handle_unknown="ignore"), CAT_COLS),
-                ("num", StandardScaler(), NUM_COLS),
+                ("num", StandardScaler(), num_cols),
             ]
         )
         clf = Pipeline([
@@ -330,7 +340,8 @@ def run_one_model(
     # ------------------------------------------------------------------ #
     # Persist prediction arrays for downstream analysis / ensembling
     # ------------------------------------------------------------------ #
-    tag = f"{model_name}_{split_kind}_seed{seed}"
+    exp_name = experiment_name if experiment_name else f"tabular_{split_kind}"
+    tag = f"{exp_name}_{model_name}_seed{seed}"
     np.save(PREDS_DIR / f"{tag}_val_scores.npy", val_scores)
     np.save(PREDS_DIR / f"{tag}_te_scores.npy", te_scores)
 
@@ -338,7 +349,7 @@ def run_one_model(
     # Build flat result record for results.csv
     # ------------------------------------------------------------------ #
     record: dict = {
-        "experiment": f"tabular_{split_kind}",
+        "experiment": exp_name,
         "model_name": model_name,
         "split_kind": split_kind,
         "seed": seed,
@@ -393,11 +404,17 @@ def main() -> None:
         help="Random seeds. Runs all models for each seed independently.",
     )
     parser.add_argument(
+        "--feature_set",
+        choices=["tabular", "tab_dyn", "tab_dyn_static"],
+        default="tabular",
+        help="Feature set to use: 'tabular' (baseline), 'tab_dyn', or 'tab_dyn_static'.",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         choices=ALL_MODELS,
-        default=ALL_MODELS,
-        help="Subset of model names to run.",
+        default=None,
+        help="Subset of model names to run (defaults to ALL_MODELS for tabular, ABLATION_MODELS for ablation).",
     )
     parser.add_argument(
         "--quick",
@@ -411,10 +428,23 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    print(
-        f"\n=== Tabular baselines | split={args.split_kind}  "
-        f"seeds={args.seeds}  quick={args.quick} ==="
+    # Determine models to run
+    if args.models is None:
+        models_to_run = ALL_MODELS if args.feature_set == "tabular" else ABLATION_MODELS
+    else:
+        models_to_run = args.models
+
+    experiment_name = (
+        f"tabular_{args.split_kind}"
+        if args.feature_set == "tabular"
+        else f"ablation_{args.feature_set}_{args.split_kind}"
     )
+
+    print(
+        f"\n=== Experiment: {experiment_name} | feature_set={args.feature_set}  "
+        f"split={args.split_kind}  seeds={args.seeds}  quick={args.quick} ==="
+    )
+    print(f"Models to run: {models_to_run}")
 
     # ------------------------------------------------------------------ #
     # Load split (identical across seeds)
@@ -436,10 +466,48 @@ def main() -> None:
     # ------------------------------------------------------------------ #
     # Build features once (no randomness; same for all seeds)
     # ------------------------------------------------------------------ #
-    print("Building features ...")
+    print("Building base tabular features ...")
     X_tr = build_tabular_features(df_train)
     X_val_feat = build_tabular_features(df_val)
     X_te_feat = build_tabular_features(df_test)
+
+    # ------------------------------------------------------------------ #
+    # Load and concatenate extra graph features if ablation feature set
+    # ------------------------------------------------------------------ #
+    if args.feature_set != "tabular":
+        from data_access import get_data_dir
+
+        data_dir = Path(get_data_dir()) / args.data
+        splits_dir = Path(__file__).parent / "splits"
+        split_file = f"{args.data}_split.npz" if args.split_kind == "temporal" else f"{args.data}_random_split.npz"
+        sp_indices = np.load(splits_dir / split_file)
+        tr_inds = sp_indices["tr_inds"]
+        val_inds = sp_indices["val_inds"]
+        te_inds = sp_indices["te_inds"]
+
+        # Load dynamic features
+        dyn_path = data_dir / "graph_dynamic.parquet"
+        print(f"Loading dynamic graph features from {dyn_path} ...")
+        df_dyn = pd.read_parquet(dyn_path)
+        dyn_tr = df_dyn.iloc[tr_inds].reset_index(drop=True)
+        dyn_val = df_dyn.iloc[val_inds].reset_index(drop=True)
+        dyn_te = df_dyn.iloc[te_inds].reset_index(drop=True)
+
+        if args.feature_set == "tab_dyn":
+            X_tr = pd.concat([X_tr, dyn_tr], axis=1)
+            X_val_feat = pd.concat([X_val_feat, dyn_val], axis=1)
+            X_te_feat = pd.concat([X_te_feat, dyn_te], axis=1)
+        elif args.feature_set == "tab_dyn_static":
+            stat_path = data_dir / f"graph_static_{args.split_kind}.parquet"
+            print(f"Loading static graph features from {stat_path} ...")
+            df_stat = pd.read_parquet(stat_path)
+            stat_tr = df_stat.iloc[tr_inds].reset_index(drop=True)
+            stat_val = df_stat.iloc[val_inds].reset_index(drop=True)
+            stat_te = df_stat.iloc[te_inds].reset_index(drop=True)
+            X_tr = pd.concat([X_tr, dyn_tr, stat_tr], axis=1)
+            X_val_feat = pd.concat([X_val_feat, dyn_val, stat_val], axis=1)
+            X_te_feat = pd.concat([X_te_feat, dyn_te, stat_te], axis=1)
+
     print(
         f"  Feature DataFrame shapes:  "
         f"train={X_tr.shape}  val={X_val_feat.shape}  test={X_te_feat.shape}"
@@ -451,7 +519,7 @@ def main() -> None:
     all_records: list[dict] = []
     for seed in args.seeds:
         print(f"\n--- seed={seed} ---")
-        for mname in args.models:
+        for mname in models_to_run:
             save_model = seed == 0  # Persist trained models only for seed 0
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -467,6 +535,7 @@ def main() -> None:
                     split_kind=args.split_kind,
                     quick=args.quick,
                     save_model=save_model,
+                    experiment_name=experiment_name,
                 )
             append_result(record, path=str(RESULTS_CSV))
             all_records.append(record)

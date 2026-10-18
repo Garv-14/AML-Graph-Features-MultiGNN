@@ -115,5 +115,90 @@ This step diagnoses and addresses early stopping and score collapse in plain Lig
 - Executed `run_tabular.py --split_kind random --seeds 0 1 2 --models lightgbm lightgbm_undersample`.
 - Executed `summarize_results.py` to refresh `results/summary_tabular.md`.
 
+---
+
+## Step 5 — Leakage-Safe Graph Features & Ablation
+
+### Goal
+Build vectorised, leakage-free dynamic and static graph features on top of the tabular
+baseline and run a full ablation (tabular vs tab+dyn vs tab+dyn+static) on both the
+temporal and random splits.
+
+### Design Rules (enforced)
+- Rows of `formatted_transactions.csv` are already chronologically ordered (non-decreasing
+  Timestamp verified at runtime). Row position is the universal transaction id.
+- **Dynamic features** for row `i` use ONLY rows with position `< i` (no future leakage).
+  Same-second ties resolved by row position.
+- All dynamic features are computed from the **full stream** (no split-specific logic).
+- **Static features** (PageRank, in-/out-degree) are computed **only from the training rows**
+  of each split to prevent test-set leakage.
+- `from_id`, `to_id`, `EdgeID`, and raw `Timestamp` are never used as model inputs.
+- Heavy-tailed features stored as `log1p`; missing history stored as `0` with explicit
+  `has_sender_history` / `has_receiver_history` flags.
+
+### New / Modified Files
+
+| File | Status | Description |
+|------|--------|-------------|
+| `graph_features.py` | **Created** | Vectorised dynamic feature builder (`build_dynamic_features`) using `np.searchsorted` + prefix sums; sparse weighted PageRank (`compute_pagerank`) via `scipy.sparse`; static degree builder (`build_static_features`). Saves outputs to `C:\aml_data\Small_HI\graph_dynamic.parquet`, `graph_static_temporal.parquet`, `graph_static_random.parquet`. |
+| `tests/test_graph_features.py` | **Created** | Unit tests: Naive Check, Future Invariance (zero leakage), No-Self/Label, PageRank convergence. All 4 tests pass. |
+| `run_tabular.py` | **Modified** | Added `--feature_set {tabular,tab_dyn,tab_dyn_static}` CLI option; `ABLATION_MODELS` registry; parquet loading/concatenation; experiment naming `ablation_<feature_set>_<split_kind>`. |
+| `summarize_ablation.py` | **Created** | Reads `results/results.csv`, aggregates over 3 seeds, writes `results/summary_ablation.md`. |
+| `results/summary_ablation.md` | **Created** | Full ablation summary with PR-AUC +/- std, ROC-AUC, F1, P@0.1%, P@0.5%, and delta PR-AUC vs tabular baseline. |
+| `results/results_v3_backup.csv` | **Created** | Backup of `results.csv` before Step 5 ablation rows were appended. |
+
+### Feature Engineering Details
+
+**Dynamic features (20 per row, Group A+B):**
+- Sender: log1p count, sum, mean, std of past amounts; time-since-last; has_sender_history
+- Receiver: same 6 features for receiver side
+- Cross-pair: log1p pair-count and pair-sum for (sender, receiver); has_pair_history
+- Temporal recency: rolling 1-hour and 24-hour log1p counts for sender and receiver (4 features)
+
+**Static features (6 per row, Group C — train-only):**
+- Sender PageRank, Receiver PageRank
+- Sender in-/out-degree, Receiver in-/out-degree
+
+**History coverage (temporal split):**
+- Train: Sender 13.22% / Receiver 11.44% no-history
+- Val:   Sender  0.09% / Receiver  0.02% no-history
+- Test:  Sender  0.10% / Receiver  0.02% no-history
+
+Feature build runtime: ~24 s dynamic, ~5 s static per split. Memory: ~775 MB RAM peak.
+
+### Ablation Results (test-set PR-AUC, mean +/- std, 3 seeds)
+
+#### Temporal split
+
+| Feature set       | LR     | RF     | XGB    | LGBM   |
+|-------------------|--------|--------|--------|--------|
+| tabular (11)      | 0.0287 | 0.1702 | 0.1274 | 0.1723 |
+| tab+dyn (31)      | 0.3379 | 0.6644 | 0.5726 | **0.7080** |
+| tab+dyn+stat (37) | 0.1542 | 0.6525 | 0.5817 | 0.6858 |
+
+Δ vs tabular (LightGBM): tab+dyn = +0.54, tab+dyn+stat = +0.51
+
+#### Random split
+
+| Feature set       | LR     | RF     | XGB    | LGBM   |
+|-------------------|--------|--------|--------|--------|
+| tabular (11)      | 0.0147 | 0.0764 | 0.0769 | 0.0865 |
+| tab+dyn (31)      | 0.1973 | 0.5362 | 0.5490 | 0.6057 |
+| tab+dyn+stat (37) | 0.2061 | 0.5487 | 0.5517 | **0.6178** |
+
+Δ vs tabular (LightGBM): tab+dyn = +0.52, tab+dyn+stat = +0.53
+
+**Best — temporal:** tab+dyn + LightGBM -> PR-AUC 0.7080 +/- 0.0129
+**Best — random:** tab+dyn+static + LightGBM -> PR-AUC 0.6178 +/- 0.0013
+
+### Runs Performed
+- Backed up `results/results.csv` to `results/results_v3_backup.csv`.
+- Full ablation runs (seeds 0, 1, 2):
+  - `run_tabular.py --feature_set tab_dyn --split_kind temporal`
+  - `run_tabular.py --feature_set tab_dyn --split_kind random`
+  - `run_tabular.py --feature_set tab_dyn_static --split_kind temporal`
+  - `run_tabular.py --feature_set tab_dyn_static --split_kind random`
+
+
 
 

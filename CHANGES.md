@@ -287,8 +287,134 @@ Replace qualitative hypotheses and unverified guesses from the initial SHAP writ
    - *Sender Gap*: The previous summary asserted that *"very short gaps (rapid-fire transactions) increase laundering score"*. The empirical Spearman correlation is positive ($\rho = +0.2372$, Q1 = +0.3911 vs Q5 = +1.6730), showing that higher gap times actually produce higher SHAP values.
    - *Unique Receivers / Out Count*: Previously described as positive linear drivers; the data shows both are strictly **non-monotonic** ($\rho = -0.1701$ and $\rho = -0.0082$).
 
+### Correction to Step 6b (Payment Format Category Mapping)
 
+In the Step 6b summary above, **Table 2 (Payment Format Category Code Analysis)** suffered from a positional indexing mix-up: category names were resolved using `.cat.codes` positional index rather than the underlying integer code in the formatted dataset. Because code 0 (`Reinvestment`) was absent from the test split, the categories were shifted by 1 position (e.g., positional index 2 was looked up in the first-appearance dictionary as `Credit Card` instead of the actual data value 3, which is `ACH`).
 
+The corrected payment-format SHAP table (evaluated across all payment format codes in the exact same SHAP sample of 21,611 transactions, with full test set row and positive counts) is:
 
+| Code | Real Payment Format | Sample Count | Mean SHAP | Share of Sampled Positives (%) | Share of Sampled Negatives (%) | Full Test Rows | Full Test Positives |
+|:----:|:-------------------|:------------:|:---------:|:------------------------------:|:------------------------------:|:--------------:|:-------------------:|
+| 0 | Reinvestment | 0 | +0.0000 | 0.00% | 0.00% | 0 | 0 |
+| 1 | Cheque | 8,167 | +0.0030 | 3.72% | 40.53% | 347,008 | 60 |
+| 2 | Credit Card | 5,815 | -0.3205 | 2.05% | 28.91% | 250,247 | 33 |
+| 3 | ACH | 4,232 | +3.0484 | 92.43% | 13.71% | 120,303 | 1,489 |
+| 4 | Cash | 2,132 | -0.8482 | 1.18% | 10.56% | 91,737 | 19 |
+| 5 | Wire | 681 | -0.7504 | 0.00% | 3.40% | 30,276 | 0 |
+| 6 | Bitcoin | 584 | +1.0768 | 0.62% | 2.87% | 24,329 | 10 |
 
+**Takeaway**: **ACH** (code 3) — not Credit Card — is the payment channel that overwhelmingly dominates laundering cases (92.43% of test positives, 1,489 of 1,611 test laundering rows, mean SHAP +3.0484). Credit Card (code 2) only accounts for 2.05% of positives (33 rows) and lowers the score (mean SHAP -0.3205).
 
+---
+
+## Step 7 — Report Assets, Visualizations, and Two Notebooks
+
+### Goal
+Produce the figures, tables, and two notebooks (
+otebooks/01_eda.ipynb and 
+otebooks/02_results.ipynb) required for the project report, modularized through a dedicated computation library (
+eport_assets.py), reading results strictly from data files and persisted benchmark artifacts.
+
+### Summary of New Files
+
+| File | Status | Description |
+|------|--------|-------------|
+| 
+eport_assets.py | **Created** | Reusable reporting module containing all data aggregation, table formatting, and matplotlib visualization functions (200 dpi, consistent model color palette, no seaborn). |
+| 
+otebooks/01_eda.ipynb | **Created** | Thin exploratory data analysis notebook displaying dataset overview, daily stream volume/rate, payment formats, currencies, transaction amounts, cyclical time patterns, and history dynamics. |
+| 
+otebooks/02_results.ipynb | **Created** | Thin results notebook presenting benchmark comparison tables across 6 experiments, lift across feature sets, split inflation factors, PR curves, alert budget curves, rule checks, tenure checks, and embedded SHAP interpretability. |
+| create_notebooks.py | **Created** | Reproducible script generating both notebooks programmatically via 
+bformat. |
+| 
+un_report_assets.py | **Created** | Standalone runner script executing all EDA and Results computations end-to-end and printing summary tables. |
+| 
+esults/final_tables.md | **Created** | Publication-ready Markdown tables of mean ± std across seeds for test PR-AUC, lift, ROC-AUC, F1, precision, and recall for all 6 experiments (excluding plain LightGBM). |
+| 
+esults/figures/report_eda_amounts.png | **Created** | Density-normalized histograms of log10(Amount Sent) for all positives vs. 200k sampled negatives (1800x1000 px). |
+| 
+esults/figures/report_eda_daily_laundering.png | **Created** | 2-panel chart of daily laundering rate (%) and total transaction volume across chronological days with split boundaries (2000x1400 px). |
+| 
+esults/figures/report_eda_hourly_weekly.png | **Created** | 2-panel chart of laundering rate across hours of day and days of week (2600x1000 px). |
+| 
+esults/figures/report_eda_pair_prior_cnt_daily.png | **Created** | Daily percentage of first-time pair transactions (pair_prior_cnt == 0) with train/val/test bounds (2000x1000 px). |
+| 
+esults/figures/report_eda_payment_format.png | **Created** | Grouped bar chart comparing share of all positives vs. negatives per payment format (2000x1000 px). |
+| 
+esults/figures/report_results_alert_budgets.png | **Created** | Alert-budget trade-off curves (Precision@k and Recall@k) at 0.1%, 0.5%, and 1.0% compliance budgets for RF, XGB, and LightGBM (2600x1000 px). |
+| 
+esults/figures/report_results_lift_by_features.png | **Created** | Grouped bar chart of PR-AUC lift per model across tabular, tab+dyn, and tab+dyn+static feature sets in 2 panels (temporal and random splits) with std error bars (2800x1200 px). |
+| 
+esults/figures/report_results_lift_inflation.png | **Created** | 2-panel visualization comparing temporal vs. random lift and quantifying inflation ratios (random / temporal lift) (2800x1200 px). |
+| 
+esults/figures/report_results_pr_curves.png | **Created** | High-resolution test Precision-Recall curves on temporal split for LightGBM (Undersample) comparing tabular baseline (PR-AUC 0.1860) to tab+dyn (PR-AUC 0.6941) against prevalence baseline (1600x1200 px). |
+
+### Key Empirical Findings & Verified Numbers
+
+1. **Dataset Overview (ormatted_transactions.csv)**:
+   - Total rows: **5,078,345** | Distinct accounts: **515,088** | Days: **18** | Laundering rows: **5,177** | Prevalence: **0.1019%**.
+
+2. **Payment Format & Category Code Clarification**:
+   - True first-appearance dictionary verified against HI-Small_Trans.csv:
+     - Code 0: Reinvestment (481,056 rows, 0 positives, 0.00% pos rate)
+     - Code 1: Cheque (1,864,331 rows, 324 positives, 0.0174% pos rate, 6.26% pos share)
+     - Code 2: Credit Card (1,323,324 rows, 206 positives, 0.0156% pos rate, 3.98% pos share)
+     - Code 3: ACH (600,797 rows, 4,483 positives, 0.7462% pos rate, **86.59%** pos share across dataset, **92.43%** of test positives)
+     - Code 4: Cash (490,891 rows, 108 positives, 0.0220% pos rate, 2.09% pos share)
+     - Code 5: Wire (171,855 rows, 0 positives, 0.00% pos rate)
+     - Code 6: Bitcoin (146,091 rows, 56 positives, 0.0383% pos rate, 1.08% pos share)
+   - *Note on Step 6b Table*: In Step 6b, .cat.codes was applied to a sample containing 5 formats, shifting ACH (code 3) to internal position 2, which explain_checks matched to 'Credit Card'. In reality, **ACH (Code 3)** is the overwhelmingly dominant laundering channel.
+
+3. **Pair Prior History & Enrichment**:
+   - On the temporal test set (=863,900$, 1,611 positives):
+     - First-time pairs (pair_prior_cnt == 0): 37,221 rows, 1,276 positives -> laundering rate = **3.4282%**.
+     - Prior pairs (pair_prior_cnt > 0): 826,679 rows, 335 positives -> laundering rate = **0.0405%**.
+     - **Enrichment Ratio: 84.60x** higher laundering likelihood on new directed pairings.
+
+4. **Model Lift & Split Inflation**:
+   - On temporal split, adding dynamic graph features dramatically expands lift for tree models:
+     - Random Forest: 91.3x (tabular) -> **356.3x** (tab+dyn) -> 349.9x (tab+dyn+static).
+     - XGBoost: 68.3x (tabular) -> **307.0x** (tab+dyn) -> 311.9x (tab+dyn+static).
+     - LightGBM (Undersample): 92.4x (tabular) -> **379.7x** (tab+dyn) -> 367.8x (tab+dyn+static).
+   - Random split inflation ratio ( / Temporal$ lift):
+     - Tabular models: ~0.78x to 1.05x (no substantial inflation without graph features).
+     - Dynamic graph models: **1.41x (RF), 1.67x (XGB), 1.49x (LGBM)** inflation under random partitioning, confirming that random cross-validation severely overstates performance due to bidirectional historical leakage.
+
+5. **Inspection Alert Budgets (Temporal Tab+Dyn)**:
+   - At 0.1% budget (864 alerts): LightGBM attains **92.28% precision** and captures **49.49% of all test positives**.
+   - At 0.5% budget (4,320 alerts): LightGBM attains **30.15% precision** and captures **80.86% of all test positives**.
+   - At 1.0% budget (8,639 alerts): LightGBM attains **16.17% precision** and captures **86.72% of all test positives**.
+
+6. **Simple Heuristic Rule Check vs. Machine Learning**:
+   - Literal Credit Card rule (Payment Format == Credit Card) & (pair_prior == 0): flags 14,748 rows, captures 0 positives (0.00% precision, 0.00% recall, 0.00 lift).
+   - Dominant Channel rule (Payment Format == ACH) & (pair_prior == 0): flags 21,204 rows, captures 1,270 positives (**5.99% precision, 78.83% recall, 0.1113 F1, 32.12x lift**).
+   - Machine Learning comparison at matching alert volumes:
+     - LightGBM at Top-14,748: **9.61% precision, 87.96% recall, 0.1732 F1, 51.52x lift**.
+     - LightGBM at Top-21,204: **6.75% precision, 88.83% recall, 0.1254 F1, 36.19x lift**.
+     - Decision Tree (depth 3, balanced): learns (Payment Format == 3) & (pair_prior == 0), flags 229,161 rows (97.77% recall, 0.69% precision, test PR-AUC = 0.0302, 16.22x lift).
+     - Full LightGBM continuous model: achieves **test PR-AUC = 0.6941 and 372.2x lift**.
+
+---
+
+## Step 7c — Result Literal Decoupling, Direction Table Persistence, and SHAP Verification
+
+### Goal
+Eliminate all typed result numbers from reporting code, persist `results/direction_table.csv` directly from `explain_checks.py`, replace hardcoded SHAP summary tables with dynamic reads from `results/category_shap_corrected.csv` and `results/direction_table.csv`, clean up the simple-rule comparison table, and re-execute both notebooks.
+
+### Summary of Modifications
+
+| File | Status | Description of Change | Rationale |
+|---|---|---|---|
+| `explain_checks.py` | **Modified** | Saved Table 1 results to `results/direction_table.csv` with columns `Rank,Feature,Mean |SHAP|,Spearman rho,Q1 Mean SHAP,Q5 Mean SHAP,Empirical Direction`. Updated Table 2 export to `results/category_shap_corrected.csv` with exact columns `format name,code,sampled rows,mean SHAP,share of sampled positives,share of sampled negatives,full-test rows,full-test positives`. | Ensures all interpretability tables are computed and saved directly by analysis routines without manual transcription. |
+| `report_assets.py` | **Modified** | (1) Replaced hardcoded `df_dir_sample` and `df_cat_sample` in `results_shap_summary` with dynamic reads from `results/direction_table.csv` and `results/category_shap_corrected.csv`.<br>(2) In `results_simple_rule_check`, removed the Credit Card rule row and its matching top-N LGBM row; looked up ACH format code strictly by name (`"ACH"`) from verified map; dynamically computed Full LightGBM metrics from `results/results.csv`.<br>(3) In `results_alert_budget_table_and_plot`, dynamically generated budget tick labels from `te_budget_*_k`.<br>(4) In `eda_amounts_table_and_plot`, dynamically formatted positive count using `len(pos_amounts)`. | Adheres strictly to the Step 7c rule: no result number may be typed into reporting code. |
+| `notebooks/01_eda.ipynb` | **Regenerated** | Re-executed in-place with `aml-venv` kernel. | Synchronizes outputs with decoupled reporting functions. |
+| `notebooks/02_results.ipynb` | **Regenerated** | Re-executed in-place with `aml-venv` kernel. Displays updated Table 8a (direction table) and Table 8b (all 7 payment formats + top 8 currencies) without Credit Card misattribution. | Fully verified row-by-row against CSV artifacts; 0 instances of "Credit Card" near "3.0484" or "92.43". |
+| `results/direction_table.csv` | **Created** | Persisted empirical direction table containing top 15 features by mean \|SHAP\|, Spearman rho, quintile means, and monotonic directions. | Direct artifact generated from `explain_checks.py`. |
+| `results/category_shap_corrected.csv` | **Updated** | Standardized column names and content for all 7 payment formats and top 8 currencies. | Canonical source for category code SHAP distributions. |
+| `verify_step7c.py` | **Created** | Verification script reading executed notebook JSON and asserting row-by-row equality with `results/direction_table.csv` and `results/category_shap_corrected.csv`, and checking string proximity. | Automated regression test for Step 7c integrity. |
+
+### Key Empirical Verifications
+- **Direction Table Row-by-Row**: Verified all 15 rows from `notebooks/02_results.ipynb` JSON match `results/direction_table.csv`.
+- **Category Table Row-by-Row**: Verified all 15 rows (7 payment formats + 8 currencies) from `notebooks/02_results.ipynb` JSON match `results/category_shap_corrected.csv`.
+- **Proximity Count**: Search for `"Credit Card"` within 100 characters of `"3.0484"` or `"92.43"` yielded **0** occurrences across both notebooks.

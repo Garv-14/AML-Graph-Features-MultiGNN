@@ -54,6 +54,8 @@ RESULTS_DIR = Path(__file__).parent / "results"
 MODELS_DIR = Path(__file__).parent / "models"
 MODEL_PATH = MODELS_DIR / "lgbm_us_tab_dyn_temporal_seed0.pkl"
 TENURE_CSV = RESULTS_DIR / "tenure_check.csv"
+CATEGORY_SHAP_CORRECTED_CSV = RESULTS_DIR / "category_shap_corrected.csv"
+DIRECTION_TABLE_CSV = RESULTS_DIR / "direction_table.csv"
 RAW_TRANS_PATH = Path(r"C:\aml_data\Small_HI\HI-Small_Trans.csv")
 FMT_TRANS_PATH = Path(r"C:\aml_data\Small_HI\formatted_transactions.csv")
 
@@ -199,8 +201,8 @@ def main():
             q5_str = "N/A"
             label = "See Table 2 (Cat)"
             direction_results.append({
-                "rank": rank, "feature": fname, "mean_abs_shap": m_val,
-                "rho": np.nan, "q1_shap": np.nan, "q5_shap": np.nan, "label": label
+                "Rank": rank, "Feature": fname, "Mean |SHAP|": round(m_val, 4),
+                "Spearman rho": rho_str, "Q1 Mean SHAP": q1_str, "Q5 Mean SHAP": q5_str, "Empirical Direction": label
             })
         else:
             f_num = f_vals.values.astype(float)
@@ -227,68 +229,144 @@ def main():
             q5_str = f"{q5_shap:+.4f}"
 
             direction_results.append({
-                "rank": rank, "feature": fname, "mean_abs_shap": m_val,
-                "rho": rho, "q1_shap": q1_shap, "q5_shap": q5_shap, "label": label
+                "Rank": rank, "Feature": fname, "Mean |SHAP|": round(m_val, 4),
+                "Spearman rho": rho_str, "Q1 Mean SHAP": q1_str, "Q5 Mean SHAP": q5_str, "Empirical Direction": label
             })
 
         print(f"{rank:<4} | {fname:<22} | {m_val:>11.4f} | {rho_str:>12} | {q1_str:>12} | {q5_str:>12} | {label:<20}")
 
+    df_dir_out = pd.DataFrame(direction_results)
+    df_dir_out.to_csv(DIRECTION_TABLE_CSV, index=False)
+    print(f"\nSaved direction analysis table to: {DIRECTION_TABLE_CSV}")
+
     # ------------------------------------------------------------------ #
-    # TABLE 2: CATEGORY CODES
+    # TABLE 2: CATEGORY CODES (CORRECTED)
     # ------------------------------------------------------------------ #
     print("\n" + "=" * 80)
-    print("TABLE 2: CATEGORY CODES (payment_format and sent_currency, Top 5 by Sample Count)")
+    print("TABLE 2: CATEGORY CODES (payment_format ALL codes, sent_currency Top 8)")
     print("=" * 80)
 
-    def analyze_category_col(col_name: str, name_map: dict):
+    def analyze_category_col(col_name: str, name_map: dict, all_codes: bool = False, top_n: int = 5):
         col_idx = feature_names.index(col_name)
-        f_col = X_sample[col_name].cat.codes.values
+        # Fix: Look up by the REAL integer code in the data, never by positional .cat.codes
+        f_col = X_te[col_name].iloc[sample_idx].to_numpy().astype(int)
+        f_col_full_te = X_te[col_name].to_numpy().astype(int)
         s_col = shap_vals[:, col_idx]
 
-        # Top 5 codes by sample count
-        code_counts = Counter(f_col)
-        top5_codes = [c for c, _ in code_counts.most_common(5)]
+        # Assertion: for every code in the sample, sampled row count equals count obtained by filtering integer column
+        unique_sample_codes = np.unique(f_col)
+        for c in unique_sample_codes:
+            sample_c = int((f_col == c).sum())
+            filtered_c = int((X_te[col_name].iloc[sample_idx].astype(int) == c).sum())
+            assert sample_c == filtered_c, (
+                f"Assertion failed for {col_name} code {c}: "
+                f"sample count ({sample_c}) != filtered integer count ({filtered_c})"
+            )
+
+        if all_codes:
+            eval_codes = sorted(name_map.keys())
+        else:
+            code_counts = Counter(f_col)
+            eval_codes = [c for c, _ in code_counts.most_common(top_n)]
 
         n_pos_total = int((y_sample == 1).sum())
         n_neg_total = int((y_sample == 0).sum())
 
         rows = []
-        for code in top5_codes:
-            mask = f_col == code
+        for code in eval_codes:
+            mask = (f_col == code)
             c_name = name_map.get(code, f"Unknown ({code})") if maps_verified else f"Code {code}"
             mean_s = float(s_col[mask].mean()) if mask.sum() > 0 else 0.0
 
             pos_in_code = int(((f_col == code) & (y_sample == 1)).sum())
             neg_in_code = int(((f_col == code) & (y_sample == 0)).sum())
 
-            share_pos = (pos_in_code / n_pos_total) * 100.0
-            share_neg = (neg_in_code / n_neg_total) * 100.0
+            share_pos = (pos_in_code / n_pos_total) * 100.0 if n_pos_total > 0 else 0.0
+            share_neg = (neg_in_code / n_neg_total) * 100.0 if n_neg_total > 0 else 0.0
+
+            full_test_mask = (f_col_full_te == code)
+            full_test_rows = int(full_test_mask.sum())
+            full_test_pos = int((full_test_mask & (y_te == 1)).sum())
 
             rows.append({
                 "column": col_name,
                 "code": code,
                 "real_name": c_name,
                 "sample_count": int(mask.sum()),
-                "mean_shap": mean_s,
-                "share_pos": share_pos,
+                "mean_shap": round(mean_s, 4),
+                "share_pos": round(share_pos, 2),
                 "share_neg": share_neg,
+                "full_test_rows": full_test_rows,
+                "full_test_positives": full_test_pos,
             })
         return rows
 
-    pf_rows = analyze_category_col("payment_format", inv_payment_format)
-    sc_rows = analyze_category_col("sent_currency", inv_currency)
+    pf_rows = analyze_category_col("payment_format", inv_payment_format, all_codes=True)
+    sc_rows = analyze_category_col("sent_currency", inv_currency, all_codes=False, top_n=8)
 
-    print(f"\n--- Feature: payment_format ---")
-    print(f"{'Code':<5} | {'Real Name':<16} | {'Sample Count':>12} | {'Mean SHAP':>10} | {'Share Pos (%)':>13} | {'Share Neg (%)':>13}")
-    print("-" * 85)
+    print(f"\n--- Feature: payment_format (ALL Codes) ---")
+    print(f"{'Code':<5} | {'Real Name':<16} | {'Sample Count':>12} | {'Mean SHAP':>10} | {'Share Pos (%)':>13} | {'Share Neg (%)':>13} | {'Full Test Rows':>14} | {'Full Test Pos':>13}")
+    print("-" * 118)
     for r in pf_rows:
-        print(f"{r['code']:<5} | {r['real_name']:<16} | {r['sample_count']:>12,} | {r['mean_shap']:>+10.4f} | {r['share_pos']:>12.2f}% | {r['share_neg']:>12.2f}%")
+        print(f"{r['code']:<5} | {r['real_name']:<16} | {r['sample_count']:>12,} | {r['mean_shap']:>+10.4f} | {r['share_pos']:>12.2f}% | {r['share_neg']:>12.2f}% | {r['full_test_rows']:>14,} | {r['full_test_positives']:>13,}")
 
-    print(f"\n--- Feature: sent_currency ---")
-    print(f"{'Code':<5} | {'Real Name':<18} | {'Sample Count':>12} | {'Mean SHAP':>10} | {'Share Pos (%)':>13} | {'Share Neg (%)':>13}")
-    print("-" * 87)
+    print(f"\n--- Feature: sent_currency (Top 8 by Sample Count) ---")
+    print(f"{'Code':<5} | {'Real Name':<18} | {'Sample Count':>12} | {'Mean SHAP':>10} | {'Share Pos (%)':>13} | {'Share Neg (%)':>13} | {'Full Test Rows':>14} | {'Full Test Pos':>13}")
+    print("-" * 120)
     for r in sc_rows:
-        print(f"{r['code']:<5} | {r['real_name']:<18} | {r['sample_count']:>12,} | {r['mean_shap']:>+10.4f} | {r['share_pos']:>12.2f}% | {r['share_neg']:>12.2f}%")
+        print(f"{r['code']:<5} | {r['real_name']:<18} | {r['sample_count']:>12,} | {r['mean_shap']:>+10.4f} | {r['share_pos']:>12.2f}% | {r['share_neg']:>12.2f}% | {r['full_test_rows']:>14,} | {r['full_test_positives']:>13,}")
+
+    # Cross-check positives per payment format in the full data against:
+    # ACH 4483, Cheque 324, Credit Card 206, Cash 108, Bitcoin 56, Reinvestment 0, Wire 0
+    print("\n--- Cross-Check: Full Data Positives per Payment Format ---")
+    expected_full_pos = {
+        "ACH": 4483,
+        "Cheque": 324,
+        "Credit Card": 206,
+        "Cash": 108,
+        "Bitcoin": 56,
+        "Reinvestment": 0,
+        "Wire": 0,
+    }
+    df_raw_fmt = pd.read_csv(FMT_TRANS_PATH, usecols=["Payment Format", "Is Laundering"])
+    full_counts = df_raw_fmt.groupby("Payment Format")["Is Laundering"].agg(["count", "sum"])
+
+    cross_check_passed = True
+    print(f"{'Code':<5} | {'Real Name':<16} | {'Full Data Positives':>20} | {'Expected Positives':>20} | {'Status'}")
+    print("-" * 75)
+    for code in sorted(inv_payment_format.keys()):
+        name = inv_payment_format[code]
+        actual_pos = int(full_counts.loc[code, "sum"]) if code in full_counts.index else 0
+        exp_pos = expected_full_pos[name]
+        status = "MATCH" if actual_pos == exp_pos else "MISMATCH"
+        if actual_pos != exp_pos:
+            cross_check_passed = False
+        print(f"{code:<5} | {name:<16} | {actual_pos:>20,} | {exp_pos:>20,} | {status}")
+
+    assert cross_check_passed, "Full data payment format positives cross-check FAILED!"
+    print("=> Cross-check PASSED: All payment format positives in full data match expected targets.")
+
+    # Save to results/category_shap_corrected.csv with exact required columns:
+    # format name, code, sampled rows, mean SHAP, share of sampled positives, share of sampled negatives, full-test rows, full-test positives
+    csv_rows = []
+    for r in pf_rows + sc_rows:
+        csv_rows.append({
+            "format name": r["real_name"],
+            "code": r["code"],
+            "sampled rows": r["sample_count"],
+            "mean SHAP": round(r["mean_shap"], 4),
+            "share of sampled positives": round(r["share_pos"], 2),
+            "share of sampled negatives": round(r["share_neg"], 2),
+            "full-test rows": r["full_test_rows"],
+            "full-test positives": r["full_test_positives"],
+        })
+    df_corrected = pd.DataFrame(csv_rows)
+    df_corrected.to_csv(CATEGORY_SHAP_CORRECTED_CSV, index=False)
+    print(f"\nSaved corrected category SHAP analysis to: {CATEGORY_SHAP_CORRECTED_CSV}")
+
+    if "--category-only" in sys.argv:
+        print("\n[--category-only flag detected, skipping Table 3 and Table 4]")
+        return
 
     # ------------------------------------------------------------------ #
     # TABLE 3: NEW-PAIR CHECK (Full test set)

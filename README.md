@@ -3,12 +3,13 @@
 A study of tabular and graph-feature machine-learning models for anti-money laundering (AML)
 detection on the IBM HI-Small synthetic transaction dataset.
 The project covers data formatting, chronological split export, tabular baselines
-(Logistic Regression, Random Forest, XGBoost, LightGBM), leakage-safe dynamic and static
+(Logistic Regression, Random Forest, XGBoost, LightGBM, Isolation Forest; plain class-weighted
+LightGBM is run but excluded from reported tables, see Limitations), leakage-safe dynamic and static
 graph features, a three-way ablation (tabular / tab+dyn / tab+dyn+static), SHAP
 interpretability, and report-ready figures and notebooks.
 
 **Built on IBM/Multi-GNN (Apache-2.0)** —
-[ibm-research/Multi-GNN](https://github.com/IBM/Multi-GNN).
+[IBM/Multi-GNN](https://github.com/IBM/Multi-GNN).
 The following components are inherited from that repository without modification to their
 model logic: the Kaggle data formatter (`format_kaggle_files.py`), the temporal split logic
 inside `data_loading.py` and `train_util.py`, and the GNN model classes in `models.py`
@@ -54,13 +55,19 @@ See [SETUP.md](SETUP.md) for full instructions.
 ```bash
 python -m venv .venv
 .venv\Scripts\activate          # Windows PowerShell
-pip install -r requirements.txt
+pip install -r requirements-lock.txt --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
-A pinned snapshot of the environment used to produce these results is in
-[requirements-lock.txt](requirements-lock.txt).
+(or `requirements.txt` plus PyTorch CPU and `torch_geometric` as in [SETUP.md](SETUP.md)). PyTorch is needed even for the tabular pipeline because the split code imports it.
 
-### 2. Format raw Kaggle transactions
+### 2. Run unit tests
+
+```bash
+python tests/test_evaluate.py
+python tests/test_graph_features.py
+```
+
+### 3. Format raw Kaggle transactions
 
 ```bash
 python format_kaggle_files.py "<AML_DATA_DIR>\Small_HI\HI-Small_Trans.csv"
@@ -68,7 +75,7 @@ python format_kaggle_files.py "<AML_DATA_DIR>\Small_HI\HI-Small_Trans.csv"
 
 Produces `<AML_DATA_DIR>/Small_HI/formatted_transactions.csv` sorted by `Timestamp`.
 
-### 3. Export the temporal split
+### 4. Export the temporal split
 
 ```bash
 python export_splits.py --data Small_HI
@@ -76,7 +83,7 @@ python export_splits.py --data Small_HI
 
 Writes `splits/Small_HI_split.npz` and `splits/Small_HI_split_summary.json`.
 
-### 4. Export the random split
+### 5. Export the random split
 
 ```bash
 python make_random_split.py
@@ -84,16 +91,32 @@ python make_random_split.py
 
 Writes `splits/Small_HI_random_split.npz` and `splits/Small_HI_random_split_summary.json`.
 
-### 5. Run tabular baselines (both split kinds)
+### 6. Compute graph features
+
+```bash
+python graph_features.py
+```
+
+Builds `graph_dynamic.parquet` and the two static files (`graph_static_temporal.parquet` and `graph_static_random.parquet`) in `<AML_DATA_DIR>/Small_HI/`. Requires both temporal and random splits to have been exported. Dynamic features take roughly 24 s; static features roughly 5 s per split.
+
+### 7. Run tabular baselines (both split kinds)
 
 ```bash
 python run_tabular.py --split_kind temporal --seeds 0 1 2
 python run_tabular.py --split_kind random   --seeds 0 1 2
 ```
 
-Appends rows to `results/results.csv`.
+Appends rows to `results/results.csv`. The default model list also trains plain LightGBM and Isolation Forest; plain LightGBM rows stay in `results/results.csv` but are excluded from reported tables.
 
-### 6. Run ablation over feature sets
+### 8. Summarize tabular baseline results
+
+```bash
+python summarize_results.py
+```
+
+Aggregates baseline rows from `results/results.csv` into `results/summary_tabular.md`.
+
+### 9. Run ablation over feature sets
 
 ```bash
 python run_tabular.py --feature_set tab_dyn        --split_kind temporal --seeds 0 1 2
@@ -102,11 +125,15 @@ python run_tabular.py --feature_set tab_dyn_static --split_kind temporal --seeds
 python run_tabular.py --feature_set tab_dyn_static --split_kind random   --seeds 0 1 2
 ```
 
-Graph features are built automatically by `graph_features.py` on first use and cached as
-`.parquet` files in `<AML_DATA_DIR>/Small_HI/`. Dynamic features take roughly 24 s; static
-features roughly 5 s per split.
+### 10. Summarize ablation results
 
-### 7. Run SHAP interpretability
+```bash
+python summarize_ablation.py
+```
+
+Aggregates feature set ablation rows from `results/results.csv` into `results/summary_ablation.md`.
+
+### 11. Run SHAP interpretability
 
 ```bash
 python explain_shap.py
@@ -115,7 +142,7 @@ python explain_shap.py
 Retrains the best model (`lightgbm_undersample`, `tab_dyn`, temporal, seed 0), verifies
 PR-AUC against `results/results.csv`, and saves figures to `results/figures/`.
 
-### 8. Run tenure and category checks
+### 12. Run tenure and category checks
 
 ```bash
 python explain_checks.py
@@ -123,7 +150,7 @@ python explain_checks.py
 
 Writes `results/direction_table.csv` and `results/category_shap_corrected.csv`.
 
-### 9. Generate report assets
+### 13. Generate report assets
 
 ```bash
 python run_report_assets.py
@@ -131,16 +158,23 @@ python run_report_assets.py
 
 Produces all EDA and results figures in `results/figures/` and Markdown tables.
 
-### 10. Generate notebooks (requires `aml-venv` Jupyter kernel)
+### 14. Register Jupyter kernel
+
+```bash
+python -m ipykernel install --user --name aml-venv --display-name "AML venv"
+```
+
+### 15. Generate and execute notebooks
 
 ```bash
 python create_notebooks.py
+jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.kernel_name=aml-venv --ExecutePreprocessor.timeout=1800 notebooks/01_eda.ipynb
+jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.kernel_name=aml-venv --ExecutePreprocessor.timeout=1800 notebooks/02_results.ipynb
 ```
 
-Creates `notebooks/01_eda.ipynb` and `notebooks/02_results.ipynb`. Open them in Jupyter
-and run with the `aml-venv` kernel.
+Creates `notebooks/01_eda.ipynb` and `notebooks/02_results.ipynb` and executes them in-place with the `aml-venv` kernel.
 
-### 11. Update results table in this README
+### 16. Update results table in this README
 
 ```bash
 python update_readme_results.py
@@ -166,7 +200,7 @@ requirements-lock.txt           # pinned pip freeze snapshot
 main.py                         # GNN training entry point (inherited)
 models.py                       # GINe, GATe, PNA, RGCN model classes (inherited)
 training.py                     # GNN training loop (inherited, wandb disabled by default)
-train_util.py                   # GNN argument parsing and model settings (inherited)
+train_util.py                   # PyG LinkNeighborLoader setup, AddEgoIds transform, GNN evaluation (evaluate_homo/evaluate_hetero), checkpointing, and model_settings.json lookup (inherited)
 inference.py                    # GNN inference (inherited; known broken, see CHANGES.md)
 data_loading.py                 # temporal split logic (inherited, env-var path added)
 data_util.py                    # graph data utilities (inherited)
@@ -205,6 +239,9 @@ verify_step7c.py                # regression test: notebook outputs match CSV ar
 
 # ── Results and figures ───────────────────────────────────────────────────
 results/results.csv             # all experiment rows (every seed, split, feature set)
+results/results_v1_backup.csv   # backup CSV from earlier run v1
+results/results_v2_backup.csv   # backup CSV from earlier run v2
+results/results_v3_backup.csv   # backup CSV from earlier run v3
 results/tenure_check.csv        # full vs. tenure-ablated model comparison (1 seed)
 results/final_tables.md         # publication-ready mean ± std tables
 results/summary_tabular.md      # tabular baseline summary
@@ -263,32 +300,21 @@ Test prevalence: temporal split = 0.1865%, random split = 0.1071%. All experimen
 
 ## Limitations
 
-- The dataset is synthetic (IBM HI-Small), so no claim is made about real-world AML
-  detection performance.
-- The finding that ACH carries most laundering rows is a property of this particular
-  synthetic dataset; it should not be generalised.
-- A gap between random-split and temporal-split performance is measured, but its cause
-  (distribution shift, bidirectional history leakage in random split, or both) was not
-  tested with controlled experiments.
-- Static PageRank and degree features gave no reliable benefit over dynamic-only features;
-  the reason was not investigated.
-- SHAP values explain what the trained model relies on, not true risk factors. The SHAP
-  computation was run on all test positives plus a 20 k subsample of negatives, so only
-  feature rankings carry over; magnitudes do not generalise to the full test distribution.
-- The tenure check used one seed. With only a few thousand positives, small differences
-  between the full and tenure-ablated models are within noise.
-- Plain LightGBM with `scale_pos_weight = negatives/positives` stopped after one tree due
-  to a dual-metric early-stopping conflict and is excluded from all reported tables.
-- No GNN results were produced. The inherited Multi-GNN code is kept but its neighbour
-  sampler requires `pyg-lib` or `torch-sparse`, which did not install on the Windows setup
-  used here (Python 3.13; no pre-built wheels available), and the GNN pipeline is
-  therefore untested.
-- NetworkX is used only to validate the PageRank implementation in unit tests; the feature
-  computation itself uses vectorised pandas/NumPy with `scipy.sparse`.
-- The inherited GNN pipeline contains leakage-prone steps found during our audit: per-split
-  feature normalisation fitted on the combined dataset, a node set built from all rows
-  (including test), and neighbour sampling without a time constraint. These matter only if
-  the GNN code is actually used for training.
+- Only one dataset (HI-Small) is evaluated; it is synthetic, so no claim is made about real-world AML detection performance.
+- The three seeds vary the model's randomness, not the data split.
+- The test set has only on the order of a thousand positives, so small differences between models are within noise.
+- XGBoost varied noticeably between seeds.
+- Account-history features are shorter for training rows than for test rows because history accumulates over time.
+- Raw PR-AUC is not comparable between the temporal and random splits because prevalence differs (use lift).
+- Plain LightGBM: with scale_pos_weight = negatives/positives, training stopped after one tree (validation average precision peaked at the first round). The cause was not fully diagnosed. It is excluded from reported tables.
+- No GNN results were produced. The inherited Multi-GNN code is kept, but its neighbour sampler needs pyg-lib or torch-sparse, which were not installed, and GNN training was not pursued on the Windows/Python 3.13 setup used here. The GNN pipeline is therefore untested.
+- Reading the inherited code showed that validation and test edge features are normalised with their own statistics (not training statistics), that the node set is built from all rows, and that neighbour sampling has no time constraint. This comes from code inspection, not experiments, and matters only if the GNN is used.
+- On the temporal split static PageRank/degree features did not help; on the random split they gave a small gain. The reason was not investigated.
+- The finding that ACH carries most laundering rows is a property of this particular synthetic dataset; it should not be generalised.
+- A gap between random-split and temporal-split performance is measured, but its cause (distribution shift, bidirectional history leakage in random split, or both) was not tested with controlled experiments.
+- SHAP values explain what the trained model relies on, not true risk factors. The SHAP computation was run on all test positives plus a 20 k subsample of negatives, so only feature rankings carry over; magnitudes do not generalise to the full test distribution.
+- The tenure check used one seed. With only a few thousand positives, small differences between the full and tenure-ablated models are within noise.
+- NetworkX is used only to validate the PageRank implementation in unit tests; the feature computation itself uses vectorised pandas/NumPy with `scipy.sparse`.
 
 ---
 
@@ -296,13 +322,9 @@ Test prevalence: temporal split = 0.1865%, random split = 0.1071%. All experimen
 
 The following citations are taken from [README_IBM_MultiGNN.md](README_IBM_MultiGNN.md):
 
-1. Egressy, B., von Jan, L., Blanuša, J., Anghel, A., Müller, R., Wattenhofer, R., &
-   Schölkopf, B. (2023). *Provably Powerful Graph Neural Networks for Directed Multigraphs.*
-   AAAI 2024. arXiv:2306.11586.
+1. Egressy, B., von Niederhäusern, L., Blanuša, J., Altman, E., Wattenhofer, R., & Atasu, K. (2024). *Provably Powerful Graph Neural Networks for Directed Multigraphs.* AAAI 2024. arXiv:2306.11586.
 
-2. Altman, E., Blanuša, J., von Jan, L., Egressy, B., Anghel, A., & Atasu, K. (2023).
-   *Realistic Synthetic Financial Transactions for Anti-Money Laundering Models.*
-   NeurIPS 2023. arXiv:2306.16424.
+2. Altman, E., Blanuša, J., von Niederhäusern, L., Egressy, B., Anghel, A., & Atasu, K. (2023). *Realistic Synthetic Financial Transactions for Anti-Money Laundering Models.* NeurIPS 2023. arXiv:2306.16424. *(author list: verify against arXiv before submission)*
 
 3. Xu, K., Hu, W., Leskovec, J., & Jegelka, S. (2019). *How Powerful are Graph Neural
    Networks?* ICLR 2019. arXiv:1810.00826. *(GIN)*
@@ -318,6 +340,6 @@ The following citations are taken from [README_IBM_MultiGNN.md](README_IBM_Multi
    (2018). *Modeling Relational Data with Graph Convolutional Networks.* ESWC 2018.
    arXiv:1703.06103. *(RGCN)*
 
-7. Blanuša, J., Anghel, A., Atasu, K., Mittelholzer, T., & Vyas, N. (2024).
-   *Graph Feature Preprocessor: Real-time Subgraph-based Feature Extraction for Financial
-   Crime Detection.* ICAIF 2024. arXiv:2402.08593. *(verify before submission)*
+7. Blanuša, J., Cravero Baraja, M., Anghel, A., von Niederhäusern, L., Altman, E., Pozidis, H., & Atasu, K. (2024). *Graph Feature Preprocessor: Real-time Subgraph-based Feature Extraction for Financial Crime Detection.* arXiv:2402.08593. *(venue: verify before submission)*
+
+Author lists were checked against arXiv for the first two entries above; check all entries before submission.

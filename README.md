@@ -23,7 +23,7 @@ inside `data_loading.py` and `train_util.py`, and the GNN model classes in `mode
 - `report_assets.py`, `run_report_assets.py`, `create_notebooks.py` — figures and notebook generation
 - `results/` — persisted CSV results, Markdown tables, and figures
 
-**Authors:** [AUTHOR NAMES] · **Supervisor:** [SUPERVISOR]
+**Authors:** Garv Chhamalwan · **Supervisor:** [SUPERVISOR]
 
 ---
 

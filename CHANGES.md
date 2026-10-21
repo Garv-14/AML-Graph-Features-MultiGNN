@@ -418,3 +418,70 @@ Eliminate all typed result numbers from reporting code, persist `results/directi
 - **Direction Table Row-by-Row**: Verified all 15 rows from `notebooks/02_results.ipynb` JSON match `results/direction_table.csv`.
 - **Category Table Row-by-Row**: Verified all 15 rows (7 payment formats + 8 currencies) from `notebooks/02_results.ipynb` JSON match `results/category_shap_corrected.csv`.
 - **Proximity Count**: Search for `"Credit Card"` within 100 characters of `"3.0484"` or `"92.43"` yielded **0** occurrences across both notebooks.
+
+---
+
+## Step 8 — Repository Presentability and Pre-Publish Preparation
+
+### Goal
+Make the repository safe and presentable to publish: replace the upstream README with an
+attribution note, write a new project README, freeze the environment, and perform a
+pre-publish security scan.
+
+### Summary of Changes
+
+| File | Status | Description |
+|------|--------|-------------|
+| `README.md` | **Renamed → `README_IBM_MultiGNN.md`** (`git mv`) | Original IBM/Multi-GNN README kept verbatim for attribution. |
+| `README.md` | **Created** | New project README with: title, summary, IBM/Multi-GNN attribution, dataset instructions, numbered reproduction guide, repository layout, auto-populated results table, limitations, and citations. |
+| `update_readme_results.py` | **Created** | Script that reads `results/results.csv`, `results/tenure_check.csv`, and `results/final_tables.md`; computes PR-AUC lift (mean ± std over seeds) for Random Forest, XGBoost, and LightGBM (Undersample) across all six experiments; and injects the table into README.md between `<!-- RESULTS:START -->` and `<!-- RESULTS:END -->` markers. Run once to populate the results section. |
+| `requirements-lock.txt` | **Created** | Full `pip freeze` output from `.venv` (pinned exact versions of every installed package). Reproducibility snapshot. |
+| `SETUP.md` | **Updated** | Added paragraph pointing to `requirements-lock.txt` and exact `pip install -r requirements-lock.txt` command. |
+| `.gitignore` | **Updated** | Added `.ipynb_checkpoints/`, `*.parquet`, `HI-Small_Trans.csv`, `formatted_transactions.csv` to prevent accidental tracking of large generated data files. |
+| `CHANGES.md` | **Updated** | This section. |
+
+### Pre-Publish Scan Results
+
+**15 largest tracked files (by size):**
+
+| Size (bytes) | File |
+|-------------:|------|
+| 2,144,673 | notebooks/02_results.ipynb |
+| 855,676 | notebooks/01_eda.ipynb |
+| 355,944 | results/figures/shap_beeswarm_top15.png |
+| 343,006 | results/figures/shap_dependence_3_s_gap_out.png |
+| 321,743 | results/figures/shap_dependence_1_pair_prior_cnt.png |
+| 258,765 | results/figures/shap_global_bar_top20.png |
+| 234,090 | results/figures/report_results_alert_budgets.png |
+| 227,756 | results/figures/report_results_lift_inflation.png |
+| 226,179 | results/figures/shap_waterfall_tp_2.png |
+| 221,962 | results/figures/shap_waterfall_tp_1.png |
+| 219,497 | results/figures/shap_waterfall_tp_3.png |
+| 163,756 | results/figures/report_eda_daily_laundering.png |
+| 147,396 | results/figures/report_eda_pair_prior_cnt_daily.png |
+| 143,851 | results/figures/shap_dependence_2_payment_format.png |
+| 143,712 | results/figures/report_eda_hourly_weekly.png |
+
+**Sensitive data scan (all tracked text and notebook files):**
+- `"Lenovo"`: 0 matches across all tracked files.
+- `"@gmail"`: 0 matches across tracked text files; 0 matches in notebooks.
+- `"C:\Users"`: 0 matches across tracked files.
+- wandb API keys / tokens / `"api_key"` / `"password"` / `"secret"`: 0 matches.
+
+(The committer email `[personal email]` appears only in `git log` metadata, not in
+any tracked file content.)
+
+**`.gitignore` coverage confirmed:**
+- `.venv/` ✓ | `models/` ✓ | `results/preds/` ✓ | `splits/*.npz` ✓
+- `__pycache__/` ✓ | `.ipynb_checkpoints/` ✓ (added this step)
+- `logs/` ✓ | `*.parquet` ✓ (added this step) | `*.npy` ✓ | `*.pkl` ✓
+
+**`git log` personal email review:**
+All commits were authored by `[personal email]`. This is a personal Gmail address
+and appears only in `git log` metadata — not in any file content. Confirm with the supervisor
+whether this email should appear in public commit history before publishing.
+
+**Citations:** Citation 7 (Blanuša et al., ICAIF 2024, arXiv:2402.08593) is marked
+`(verify before submission)` because it was not found in any file in this repository; it
+was sourced from external knowledge. All other citations (1–6) are present in
+`README_IBM_MultiGNN.md`.

@@ -12,6 +12,12 @@ Install all common data, evaluation, baseline, and visualization libraries:
 pip install -r requirements.txt
 ```
 
+A pinned snapshot of the exact package versions used to produce the results in this
+repository is in `requirements-lock.txt`. To reproduce the identical environment:
+```bash
+pip install -r requirements-lock.txt
+```
+
 ---
 
 ## 2. PyTorch and PyTorch Geometric Installation

@@ -10,3 +10,11 @@ results/preds/
 models/
 *.pkl
 *.npy
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Large generated data files (parquet graph features, raw dataset)
+*.parquet
+HI-Small_Trans.csv
+formatted_transactions.csv

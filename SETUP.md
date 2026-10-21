@@ -15,7 +15,7 @@ pip install -r requirements.txt
 A pinned snapshot of the exact package versions used to produce the results in this
 repository is in `requirements-lock.txt`. To reproduce the identical environment:
 ```bash
-pip install -r requirements-lock.txt
+pip install -r requirements-lock.txt --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 ---

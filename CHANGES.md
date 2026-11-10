@@ -485,3 +485,48 @@ whether this email should appear in public commit history before publishing.
 `(verify before submission)` because it was not found in any file in this repository; it
 was sourced from external knowledge. All other citations (1–6) are present in
 `README_IBM_MultiGNN.md`.
+
+
+---
+
+## Step 9 — Tail Analysis and Excel Reporting Workbook
+
+### Goal
+Quantify the impact of the dataset's near-empty tail (days 10–17 containing only 1,108 transactions with 655 laundering cases) on test set performance, and produce a publication-ready Excel workbook (`results/graph_results.xlsx`) containing exact numerical tables for every chart across EDA, baseline models, SHAP interpretability, and tail sensitivity.
+
+### Summary of New Files
+
+| File | Status | Description |
+|------|--------|-------------|
+| `analyze_tail.py` | **Created** | Comprehensive tail evaluation script computing daily transaction volume, bulk vs. all test sensitivity across 24 configurations (4 models × 3 feature sets × 2 splits), top-$k$ alert tail concentration, and feature profiling of tail transactions. |
+| `results/tail_sensitivity.csv` | **Created** | Sensitivity metrics (rows, positives, AP mean, lift, and random/temporal lift ratios) across all 24 configurations on all test rows vs. bulk rows (day $\le 9$). |
+| `results/tail_topk.csv` | **Created** | Tail concentration analysis at inspection budgets $k \in \{864, 4320, 8639\}$ for `lightgbm_undersample` tab_dyn temporal seed 0. |
+| `results/tail_profile.csv` | **Created** | Feature profile comparison (amount, gap, pair frequency, unique receivers) comparing positives in days 8–9, positives in days 10–17, and normal transactions in days 8–9. |
+| `export_excel.py` | **Created** | Multi-sheet openpyxl workbook generator adhering to rigorous financial modeling guidelines: blue font for raw inputs, black for local Excel formulas, green for cross-sheet formula links, frozen header panes, auto-fit column widths, and fullCalcOnLoad enabled. |
+| `results/graph_results.xlsx` | **Created** | Completed 17-sheet master Excel workbook with 603 formula cells and 0 error cells. |
+
+### Key Empirical Findings
+
+1. **Daily Stream & Tail Distribution**:
+   - Total stream: 18 days, 5,078,345 transactions, 5,177 laundering rows (0.1019% prevalence).
+   - Bulk stream (days 0–9): 5,077,237 transactions, 4,522 laundering rows (0.0891% prevalence).
+   - Tail stream (days 10–17): 1,108 transactions, 655 laundering rows (**59.1155% prevalence**).
+   - In the temporal test set ($N = 863,900$, 1,611 positives):
+     - Bulk (days 8–9): 862,792 rows, 956 positives (0.1108% prevalence).
+     - Tail (days 10–17): 1,108 rows, 655 positives (59.1155% prevalence).
+
+2. **Tail Sensitivity & Lift Stability**:
+   - For `lightgbm_undersample` tab_dyn:
+     - All test rows: AP = 0.7080, Lift = 379.7x (Temporal); AP = 0.6057, Lift = 565.7x (Random).
+     - Bulk rows only: AP = 0.6058, Lift = 546.7x (Temporal); AP = 0.6057, Lift = 565.8x (Random).
+     - Random/temporal lift ratio shifts from 1.49x on all rows to 1.03x on bulk rows, revealing that temporal lift was previously depressed on full test due to denominator prevalence inflation (0.1865% vs 0.1108%).
+
+3. **Top-$k$ Tail Alert Capture**:
+   - At $k = 864$ (0.1% budget): 467 alerts in tail (54.05% of alerts), capturing 445 tail TPs (representing 57.35% of all 776 captured TPs).
+   - At $k = 4,320$ (0.5% budget): 703 alerts in tail, capturing 645 tail TPs (49.05% of all 1,315 captured TPs).
+   - At $k = 8,639$ (1.0% budget): 713 alerts in tail, capturing 652 tail TPs (46.84% of all 1,392 captured TPs).
+
+4. **Workbook Verification**:
+   - 17 sheets: README, Split_Summary, Daily, Payment_Format, Time_Patterns, Amounts, Lift, Inflation, Metrics, Alert_Budgets, PR_Curve, SHAP, Tenure_Check, Rule_vs_Model, Tail_Sensitivity, Tail_TopK, Tail_Profile.
+   - All 24 Lift comparisons against `results/final_tables.md` matched within tolerance ($< 0.1$).
+   - Total formula cells: 603 ($> 200$), zero `#VALUE!`, `#REF!`, `#N/A`, or `#DIV/0!` errors.
